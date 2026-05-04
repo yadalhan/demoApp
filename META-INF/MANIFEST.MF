@@ -1,0 +1,29 @@
+Manifest-Version: 1.0
+Main-Class: com.xaan.demo.DemoApplication
+Class-Path: checker-qual-3.52.0.jar spring-data-jpa-3.5.10.jar spring-da
+ ta-commons-3.5.10.jar jackson-annotations-2.21.jar spring-boot-starter-
+ 3.5.13.jar hibernate-core-6.6.45.Final.jar spring-aspects-6.2.17.jar is
+ tack-commons-runtime-4.1.2.jar aspectjweaver-1.9.25.1.jar HikariCP-6.3.
+ 3.jar jakarta.inject-api-2.0.1.jar txw2-4.0.6.jar jaxb-core-4.0.6.jar s
+ pring-context-6.2.17.jar logback-core-1.5.32.jar hibernate-commons-anno
+ tations-7.0.3.Final.jar spring-expression-6.2.17.jar spring-webmvc-6.2.
+ 17.jar spring-boot-autoconfigure-3.5.13.jar log4j-api-2.24.3.jar jandex
+ -3.2.0.jar micrometer-observation-1.15.10.jar tomcat-embed-el-10.1.53.j
+ ar angus-activation-2.0.3.jar tomcat-embed-core-10.1.53.jar jackson-dat
+ abind-2.21.2.jar spring-tx-6.2.17.jar spring-core-6.2.17.jar jackson-co
+ re-2.21.2.jar byte-buddy-1.17.8.jar spring-boot-starter-jdbc-3.5.13.jar
+  spring-boot-starter-json-3.5.13.jar spring-boot-starter-logging-3.5.13
+ .jar spring-web-6.2.17.jar spring-aop-6.2.17.jar spring-boot-starter-to
+ mcat-3.5.13.jar log4j-to-slf4j-2.24.3.jar classmate-1.7.3.jar jaxb-runt
+ ime-4.0.6.jar spring-boot-starter-web-3.5.13.jar jakarta.transaction-ap
+ i-2.0.1.jar jackson-datatype-jsr310-2.21.2.jar logback-classic-1.5.32.j
+ ar spring-beans-6.2.17.jar spring-boot-3.5.13.jar jakarta.persistence-a
+ pi-3.1.0.jar antlr4-runtime-4.13.0.jar spring-jcl-6.2.17.jar snakeyaml-
+ 2.4.jar micrometer-commons-1.15.10.jar jakarta.xml.bind-api-4.0.4.jar s
+ pring-orm-6.2.17.jar jakarta.activation-api-2.1.4.jar spring-jdbc-6.2.1
+ 7.jar postgresql-42.7.10.jar jakarta.annotation-api-2.1.1.jar jackson-m
+ odule-parameter-names-2.21.2.jar jackson-datatype-jdk8-2.21.2.jar tomca
+ t-embed-websocket-10.1.53.jar spring-boot-starter-data-jpa-3.5.13.jar j
+ boss-logging-3.6.3.Final.jar jul-to-slf4j-2.0.17.jar slf4j-api-2.0.17.j
+ ar
+
