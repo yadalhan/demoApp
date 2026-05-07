@@ -1,5 +1,6 @@
 package com.xaan.demo.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import javax.crypto.Cipher;
 import javax.crypto.spec.SecretKeySpec;
@@ -9,22 +10,13 @@ import java.util.Base64;
 public class PasswordService {
     
     private static final String AES_ALGORITHM = "AES";
-    private static final String ENV_ENCRYPTION_KEY = "ENCRYPTION_SECRET_KEY";
-    private static final byte[] SECRET_KEY;
     
-    static {
-        String keyFromEnv = System.getenv(ENV_ENCRYPTION_KEY);
-        if (keyFromEnv != null && !keyFromEnv.isEmpty()) {
-            SECRET_KEY = keyFromEnv.getBytes();
-        } else {
-            // Fallback for development only - CHANGE THIS IN PRODUCTION
-            SECRET_KEY = "CHANGE_ME_PRODUCTION_KEY".getBytes();
-        }
-    } // Configure via ENCRYPTION_SECRET_KEY environment variable
+    @Value("${data-enc-key}")
+    private String encryptionKey; // Injected from Vault kv-v2: ebiz_service/ebiz_db/data-enc-key
     
     public String encryptPassword(String password) {
         try {
-            SecretKeySpec secretKey = new SecretKeySpec(SECRET_KEY, AES_ALGORITHM);
+            SecretKeySpec secretKey = new SecretKeySpec(encryptionKey.getBytes(), AES_ALGORITHM);
             Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey);
             byte[] encryptedBytes = cipher.doFinal(password.getBytes());
@@ -36,7 +28,7 @@ public class PasswordService {
     
     public String decryptPassword(String encryptedPassword) {
         try {
-            SecretKeySpec secretKey = new SecretKeySpec(SECRET_KEY, AES_ALGORITHM);
+            SecretKeySpec secretKey = new SecretKeySpec(encryptionKey.getBytes(), AES_ALGORITHM);
             Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
             cipher.init(Cipher.DECRYPT_MODE, secretKey);
             byte[] encryptedBytes = Base64.getDecoder().decode(encryptedPassword);
