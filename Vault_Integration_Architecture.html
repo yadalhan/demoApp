@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vault Integration Architecture - demoApp</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+               background: #1a1a2e; display: flex; flex-direction: column; align-items: center; }
+        .presentation { width: 960px; margin: 20px; }
+        .slide { width: 960px; height: 720px; background: white; margin-bottom: 30px;
+                     padding: 40px 60px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                     page-break-inside: avoid; position: relative; overflow: hidden; }
+        .slide-title { font-size: 48px; font-weight: bold; color: #2c3e50;
+                         margin-bottom: 30px; border-bottom: 4px solid #3498db; padding-bottom: 15px; }
+        .slide-subtitle { font-size: 24px; color: #7f8c8d; margin-top: 10px; font-style: italic; }
+        .slide-content { font-size: 18px; line-height: 1.6; color: #34495e; }
+        .slide-content ul { margin-left: 30px; }
+        .slide-content li { margin-bottom: 10px; }
+        .code-block { background: #2c3e50; color: #ecf0f1; padding: 15px;
+                          border-radius: 5px; font-family: 'Courier New', monospace;
+                          font-size: 14px; line-height: 1.4; margin: 15px 0; }
+        .success { color: #27ae60; font-weight: bold; }
+        .warning { color: #f39c12; font-weight: bold; }
+        .error { color: #e74c3c; font-weight: bold; }
+        .highlight { background: #fff3cd; padding: 2px 6px; border-radius: 3px; }
+        table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+        table th, table td { border: 1px solid #bdc3c7; padding: 10px; text-align: left; }
+        table th { background: #3498db; color: white; }
+        .header { text-align: center; padding: 150px 0; }
+        .footer { font-size: 16px; color: #95a5a6; text-align: center;
+                      position: absolute; bottom: 30px; left: 60px; right: 60px; }
+        @media print {
+            body { background: white; }
+            .slide { page-break-after: always; margin: 0; box-shadow: none; }
+        }
+        .controls { position: fixed; bottom: 20px; right: 20px; z-index: 1000; }
+        .controls button { background: #3498db; color: white; border: none; padding: 10px 20px;
+                               margin: 0 5px; cursor: pointer; border-radius: 5px; font-size: 14px; }
+        .controls button:hover { background: #2980b9; }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <button onclick="window.print()">🖨️ Print/PDF 저장</button>
+        <button onclick="location.href='generate_vault_ppt.py'">📥 Python 스크립트</button>
+    </div>
+
+    <div class="presentation">
+        <!-- Slide 1: Title -->
+        <div class="slide header">
+            <h1 style="font-size: 60px; color: #2c3e50; margin-bottom: 20px;">🔐 Vault Integration Architecture</h1>
+            <p class="slide-subtitle" style="font-size: 28px;">demoApp - Spring Boot & HashiCorp Vault kv-v2</p>
+            <p class="slide-subtitle" style="font-size: 20px; margin-top: 40px;">Sisyphus - Powered by OhMyOpenCode</p>
+            <div class="footer">2026-05-07</div>
+        </div>
+
+        <!-- Slide 2: Current Architecture -->
+        <div class="slide">
+            <h1 class="slide-title">📊 Current Architecture (Working - 2026-05-07)</h1>
+            <div class="slide-content">
+                <h3 style="color: #3498db; margin: 20px 0 10px 0;">Vault kv-2 Integration</h3>
+                <ul>
+                    <li><strong>Vault Server</strong>: 192.168.2.57:8200</li>
+                    <li><strong>Mount</strong>: ebiz_service (kv-v2)</li>
+                    <li><strong>Secret Path</strong>: ebiz_db/data-enc-key</li>
+                    <li><strong>Key</strong>: fernet-key (32 bytes)</li>
+                </ul>
+                <h3 style="color: #3498db; margin: 20px 0 10px 0;">Flow</h3>
+                <ol>
+                    <li>demoApp → Spring Cloud Vault → HashiCorp Vault</li>
+                    <li>PasswordService reads Fernet key from Vault</li>
+                    <li>AES-128 encryption with CBC mode</li>
+                    <li>Base64 encoded output stored in database</li>
+                </ol>
+            </div>
+        </div>
+
+        <!-- Slide 3: Vault kv-2 Path Structure -->
+        <div class="slide">
+            <h1 class="slide-title">🔑 Vault kv-2 Path Structure</h1>
+            <div class="slide-content">
+                <p><strong>Secret Path</strong>: <span class="highlight">ebiz_service/data/ebiz_db/data-enc-key</span></p>
+                <div class="code-block">
+# Enable kv-2 backend<br>
+vault secrets enable -path=ebiz_service kv-v2<br>
+<br>
+# Store Fernet key<br>
+vault kv put -mount=ebiz_service ebiz_db/data-enc-key \<br>
+&nbsp;&nbsp;fernet-key="NgqOBievnB9500cQOnSQ-..." \<br>
+&nbsp;&nbsp;description="encryption key for ebiz db column"<br>
+<br>
+# Read secret (kv-2 adds 'data/' automatically)<br>
+vault kv get -mount=ebiz_service ebiz_db/data-enc-key
+                </div>
+                <p><strong>API Path</strong>: <span class="highlight">/v1/ebiz_service/data/ebiz_db/data-enc-key</span></p>
+            </div>
+        </div>
+
+        <!-- Slide 4: Fernet Key Structure -->
+        <div class="slide">
+            <h1 class="slide-title">🔐 Fernet Key Structure (32 bytes total)</h1>
+            <div class="slide-content">
+                <table>
+                    <tr><th>Bytes</th><th>Purpose</th><th>Size</th></tr>
+                    <tr><td><strong>0-15</strong></td><td>AES-128 Key</td><td>16 bytes</td></tr>
+                    <tr><td><strong>16-31</strong></td><td>HMAC-SHA256 Key</td><td>16 bytes</td></tr>
+                </table>
+                <p><strong>Format</strong>: URL-safe Base64 (uses '-' and '_')</p>
+                <p><strong>Example</strong>: <code>NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y=</code></p>
+                <div class="code-block">
+// Decode URL-safe Base64 Fernet key (32 bytes)<br>
+byte[] fernetKey = Base64.getUrlDecoder().decode(fernetKeyBase64);<br>
+<br>
+// Use first 16 bytes for AES-128<br>
+this.encryptionKey = fernetKey; // First 16 bytes used for AES
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 5: PasswordService Implementation -->
+        <div class="slide">
+            <h1 class="slide-title">⚙️ PasswordService Implementation</h1>
+            <div class="slide-content">
+                <p><strong>VaultOperations.read() Approach</strong></p>
+                <div class="code-block">
+@Service<br>
+public class PasswordService {<br>
+&nbsp;&nbsp;private byte[] encryptionKey;<br>
+<br>
+&nbsp;&nbsp;public PasswordService(VaultOperations vaultOps) {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;this.vaultOperations = vaultOps;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;loadEncryptionKey();<br>
+&nbsp;&nbsp;}<br>
+<br>
+&nbsp;&nbsp;private void loadEncryptionKey() {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;VaultResponse response = vaultOps.read(<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"ebiz_service/data/ebiz_db/data-enc-key");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;// kv-v2 response: {"data":{"data":{...}}, "metadata":{...}}<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Map<String, Object> outerData = response.getData();<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Map<String, Object> secretData = (Map<>) outerData.get("data");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;String fernetKeyBase64 = (String) secretData.get("fernet-key");<br>
+&nbsp;&nbsp;&nbsp;&nbsp;this.encryptionKey = Base64.getUrlDecoder()<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;.decode(fernetKeyBase64);<br>
+&nbsp;&nbsp;}<br>
+}
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 6: Encryption Flow -->
+        <div class="slide">
+            <h1 class="slide-title">🔄 Password Encryption Flow</h1>
+            <div class="slide-content">
+                <div style="text-align: center; padding: 20px;">
+                    <p style="font-size: 20px; margin: 10px 0;">User Input: <strong>"vaulttest123"</strong></p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 18px;">PasswordService.encryptPassword()</p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 18px;">Fernet Key (byte[32]) → AES-128 (first 16 bytes)</p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 18px;">Cipher.doFinal(password.getBytes())</p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 18px;">Base64.getEncoder().encodeToString()</p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 20px; color: #27ae60;">Output: <strong>"pU4nAaBrwqPKLoV1Waa/tw=="</strong></p>
+                    <p style="font-size: 24px; margin: 10px 0;">↓</p>
+                    <p style="font-size: 18px;">Stored in DB: <code>ebiz.board.password</code></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 7: VaultResponse Structure -->
+        <div class="slide">
+            <h1 class="slide-title">📦 VaultResponse Structure (kv-2)</h1>
+            <div class="slide-content">
+                <div class="code-block">
+{<br>
+&nbsp;&nbsp;"data": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"data": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"description": "encryption key for ebiz db column",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"fernet-key": "NgqOBievnB9500cQOnSQ-..."<br>
+&nbsp;&nbsp;&nbsp;&nbsp;},<br>
+&nbsp;&nbsp;&nbsp;&nbsp;"metadata": {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"created_time": "2026-05-06T11:32:48...",<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"version": 1<br>
+&nbsp;&nbsp;&nbsp;&nbsp;}<br>
+&nbsp;&nbsp;}<br>
+}
+                </div>
+                <p><strong>Key Points:</strong></p>
+                <ul>
+                    <li>kv-v2 wraps data in <strong>double "data" fields</strong></li>
+                    <li>Outer: <code>response.getData()</code> → Map</li>
+                    <li>Inner: <code>outerData.get("data")</code> → Secret data</li>
+                    <li>Actual key: <code>secretData.get("fernet-key")</code></li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Slide 8: Configuration -->
+        <div class="slide">
+            <h1 class="slide-title">⚙️ Configuration Files</h1>
+            <div class="slide-content">
+                <p><strong>application.properties</strong></p>
+                <div class="code-block">
+# Vault Configuration<br>
+spring.cloud.vault.uri=http://192.168.2.57:8200<br>
+spring.cloud.vault.token=${VAULT_TOKEN}<br>
+spring.cloud.vault.fail-fast=false
+                </div>
+                <p><strong>Key Settings:</strong></p>
+                <ul>
+                    <li><code>fail-fast=false</code>: App starts even if Vault is down</li>
+                    <li>Token: Stored in <code>application.properties</code> (file is in <code>.gitignore</code>)</li>
+                    <li>URI: Vault server address</li>
+                    <li>No <code>spring.cloud.vault.kv.*</code> properties needed (using VaultOperations.read() directly)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Slide 9: Verification Results -->
+        <div class="slide">
+            <h1 class="slide-title">✅ Verification (Tested 2026-05-07)</h1>
+            <div class="slide-content">
+                <table>
+                    <tr><th>Test Case</th><th>Result</th><th>Details</th></tr>
+                    <tr><td>App Startup</td><td class="success">✅ Success</td><td>Reads Fernet key from Vault</td></tr>
+                    <tr><td>POST /api/v1/posts</td><td class="success">✅ Success</td><td>Post ID 2017587 created</td></tr>
+                    <tr><td>Password Encryption</td><td class="success">✅ Success</td><td>"pU4nAaB..." stored in DB</td></tr>
+                    <tr><td>Vault Unavailable</td><td class="warning">⚠️ Graceful</td><td>fail-fast=false, app continues</td></tr>
+                </table>
+                <p style="margin-top: 20px;"><strong>Database Verification:</strong></p>
+                <div class="code-block">
+SELECT id, title, password FROM ebiz.board WHERE id = 2017587;<br>
+-- Returns: pU4nAaBrwqPKLoV1Waa/tw== (encrypted)
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 10: Security Considerations -->
+        <div class="slide">
+            <h1 class="slide-title">🔒 Security Best Practices</h1>
+            <div class="slide-content">
+                <p class="success">✅ Implemented:</p>
+                <ul>
+                    <li>Fernet key read from Vault kv-2 at startup</li>
+                    <li>URL-safe Base64 decoding for Fernet format</li>
+                    <li>AES-128 encryption with CBC mode</li>
+                    <li>Base64 output for database storage</li>
+                </ul>
+                <p class="warning" style="margin-top: 20px;">⚠️ To Improve:</p>
+                <ul>
+                    <li>Move Vault token to environment variable (currently in app.properties)</li>
+                    <li>Enable TLS/HTTPS for Vault communication (currently HTTP)</li>
+                    <li>Use AppRole authentication instead of Token for production</li>
+                    <li>Implement Fernet key rotation strategy</li>
+                    <li>Enable Vault audit logging</li>
+                    <li>Restrict network access to Vault (firewall rules)</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Slide 11: Files Modified -->
+        <div class="slide">
+            <h1 class="slide-title">📝 Repository Changes</h1>
+            <div class="slide-content">
+                <table>
+                    <tr><th>File</th><th>Change</th><th>Purpose</th></tr>
+                    <tr><td><code>PasswordService.java</code></td><td>Rewritten</td><td>Vault-based Fernet key loading</td></tr>
+                    <tr><td><code>application.properties</code></td><td>Updated</td><td>Vault connection settings</td></tr>
+                    <tr><td><code>VAULT_AND_ENCRYPTION.md</code></td><td>Updated</td><td>Documentation</td></tr>
+                    <tr><td><code>VAULT_INTEGRATION_DIAGRAM.md</code></td><td>Created</td><td>Architecture diagrams</td></tr>
+                </table>
+                <p style="margin-top: 20px;"><strong>GitHub</strong>: <a href="https://github.com/yadalhan/demoApp">https://github.com/yadalhan/demoApp</a></p>
+                <p><strong>Commits</strong>:</p>
+                <ul>
+                    <li><code>7c1b2cb</code> - Update Vault integration diagram</li>
+                    <li><code>d304543</code> - Fix Vault kv-2 integration with Fernet key</li>
+                    <li><code>5dd1b5e</code> - Fix Vault key name: use fernet-key</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Slide 12: Q&A -->
+        <div class="slide header">
+            <h1 style="font-size: 80px; color: #2c3e50; margin-bottom: 30px;">❓ Questions?</h1>
+            <p class="slide-subtitle" style="font-size: 28px;">Thank You!</p>
+            <div class="footer">
+                Sisyphus - Powered by OhMyOpenCode<br>
+                https://github.com/yadalhan/demoApp
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Keyboard navigation
+        let currentSlide = 0;
+        const slides = document.querySelectorAll('.slide');
+        
+        function showSlide(n) {
+            slides.forEach(s => s.style.display = 'none');
+            slides[n].style.display = 'block';
+        }
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ') {
+                currentSlide = Math.min(currentSlide + 1, slides.length - 1);
+                showSlide(currentSlide);
+            } else if (e.key === 'ArrowLeft') {
+                currentSlide = Math.max(currentSlide - 1, 0);
+                showSlide(currentSlide);
+            }
+        });
+        
+        // Initialize
+        showSlide(0);
+    </script>
+</body>
+</html>
