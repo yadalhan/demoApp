@@ -25,7 +25,7 @@ spring.cloud.vault.kv.application-name=ebiz_db
 - **KV Version**: 2 (versioned)
 - **Mount Path**: `ebiz_service`
 - **Secret Path**: `ebiz_db`
-- **Encryption Key**: `data-enc-key` (stored in Vault)
+- **Encryption Key**: `fernet-key` (stored in Vault)
 - **Token**: VAULT_TOKEN_PLACEHOLDER
 
 ### Setting up Vault Secrets
@@ -37,7 +37,7 @@ To configure the encryption key in Vault:
 vault secrets enable -path=ebiz_service kv-v2
 
 # Store the encryption key
-vault kv put -mount=ebiz_service ebiz_db data-enc-key="MySecretKey12345"
+vault kv put -mount=ebiz_service ebiz_db fernet-key="MySecretKey12345"
 
 # Verify the secret
 vault kv get -mount=ebiz_service ebiz_db
@@ -46,7 +46,7 @@ vault kv get -mount=ebiz_service ebiz_db
 ### How It Works
 
 1. **Spring Cloud Vault** reads from `ebiz_service/data/ebiz_db` (kv-v2 adds `data/` automatically)
-2. The key `data-enc-key` is injected into `PasswordService` via `@Value("${data-enc-key}")`
+2. The key `fernet-key` is injected into `PasswordService` via `@Value("${fernet-key}")`
 3. `PasswordService` uses this key for AES encryption/decryption of passwords
 
 ## Password Encryption
@@ -90,12 +90,12 @@ public Long update(Long id, BoardUpdateRequestDto requestDto) {
 #### 2. Encryption Implementation
 `PasswordService.java` uses AES encryption with Base64 encoding:
 - **Algorithm**: AES
-- **Key Source**: Injected from Vault kv-v2 (`ebiz_service/ebiz_db/data-enc-key`)
+- **Key Source**: Injected from Vault kv-v2 (`ebiz_service/ebiz_db/fernet-key`)
 - **Output**: Base64 encoded string (e.g., `IdKBPP2oSDzXjgCMfMtO+Q==`)
 
 **Key Implementation:**
 ```java
-@Value("${data-enc-key}")
+@Value("${fernet-key}")
 private String encryptionKey; // Injected from Vault kv-v2
 
 public String encryptPassword(String password) {
@@ -157,7 +157,7 @@ Used `deploy.sh` for deployment to production server (192.168.2.57):
 - ✅ Old passwords migrated
 
 ## Security Recommendations
-1. **Vault Secret Setup**: Ensure `data-enc-key` is configured in Vault at `ebiz_service/ebiz_db`
+1. **Vault Secret Setup**: Ensure `fernet-key` is configured in Vault at `ebiz_service/ebiz_db`
 2. **Token Rotation**: Rotate Vault token regularly for security
 3. **AppRole Authentication**: Use AppRole instead of Token auth for production
 4. **Password Validation**: Implement password validation endpoint using `PasswordService.validatePassword()`

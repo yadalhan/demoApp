@@ -11,8 +11,8 @@ public class PasswordService {
     
     private static final String AES_ALGORITHM = "AES";
     
-    @Value("${data-enc-key}")
-    private String encryptionKey; // Injected from Vault kv-v2: ebiz_service/ebiz_db/data-enc-key
+    @Value("${fernet-key}")
+    private String encryptionKey; // Injected from Vault kv-v2: ebiz_service/data/ebiz_db/data-enc-key (field: fernet-key)
     
     public String encryptPassword(String password) {
         try {
