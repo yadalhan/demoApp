@@ -19,8 +19,8 @@ public class IndexController {
 
     @GetMapping("/")
     public String index(Model model) {
-        model.addAttribute("posts", boardService.findAllDesc());
-        return "index";
+        model.addAttribute("posts", boardService.findLast100());
+        return "last100";
     }
 
     @GetMapping("/posts/save")
