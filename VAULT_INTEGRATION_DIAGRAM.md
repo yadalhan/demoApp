@@ -1,283 +1,339 @@
 # Vault Integration Architecture - demoApp
 
-## Current Architecture (As-Is)
+## Current Architecture (Working - 2026-05-07)
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────┐
 │                        demoApp (Spring Boot)                       │
 │                                                                     │
-│  ┌──────────────────┐      ┌────────────────────────────────────┐  │
-│  │  VaultConfig.java │      │  application.properties            │  │
-│  │  (localhost:8200)│     │  - 192.168.2.57:8200              │  │
-│  │  Token: hardcoded│     │  - Token: hvs.REDACTED_VAULT_TOKEN_FRAGMENT...       │  │
-│  └────────┬─────────┘      │  - fail-fast: false               │  │
-│           │                └──────────────┬───────────────────────┘  │
+│  ┌──────────────────┐      ┌────────────────────────────┐  │
+│  │  application.properties │     │  PasswordService.java       │  │
+│  │  - Vault URI         │────▶│  - VaultOperations       │  │
+│  │  - Token (env var)   │     │  - loadEncryptionKey()    │  │
+│  └────────┬─────────┘     │  - Fernet key from Vault  │  │
+│           │                   └──────────────┬──────────────┘  │
 │           │                              │                          │
-│  ┌────────▼──────────────────────────────▼──────────────────────┐  │
+│  ┌────────▼────────────────────────────▼──────────────────────┐  │
 │  │         Spring Cloud Vault (spring-cloud-starter-vault)       │  │
 │  └──────────────────────────────┬────────────────────────────────┘  │
 └─────────────────────────────────┼────────────────────────────────────┘
                                   │
-                                  │ HTTP (REST API)
+                                  │ HTTP REST API (Token Auth)
                                   │
                     ┌─────────────▼─────────────┐
-                    │   Vault Server              │
-                    │   192.168.2.57:8200        │
-                    │                             │
-                    │   [Secret Path]             │
-                    │   secret/demoApp            │
-                    │   (NOT YET CONFIGURED)     │
+                    │   Vault Server (kv-v2)                       │
+                    │   192.168.2.57:8200                    │
+                    │                                         │
+                    │   Mount: ebiz_service (kv-v2)            │
+                    │   Path: ebiz_db/data-enc-key            │
+                    │                                         │
+                    │   ┌─────────────────────────────┐     │
+                    │   │ Key: fernet-key (32 bytes)  │     │
+                    │   │ - 16 bytes: AES-128 key    │     │
+                    │   │ - 16 bytes: HMAC-SHA256   │     │
+                    │   └─────────────────────────────┘     │
                     └─────────────────────────────┘
                                   │
-                                  │
-                    ┌─────────────▼─────────────┐
-                    │   Secret Retrieval:         │
-                    │   - DB Password            │
-                    │   - Encryption Key          │
-                    │   (NOT IMPLEMENTED YET)    │
+                                  │ VaultResponse
+                                  ▼
+                    ┌─────────────────────────────┐
+                    │   Fernet Key Retrieved                    │
+                    │   Base64URL decoded → byte[32]       │
+                    │   (uses getUrlDecoder())              │
+                    └──────────────┬──────────────┘
+                                   │
+                    ┌─────────────▼──────────────┐
+                    │   PasswordService                      │
+                    │   - encryptionKey = byte[32]       │
+                    │   - AES-128 encryption             │
+                    │   - Base64 output                  │
+                    └──────────────┬──────────────┘
+                                   │
+                                   ▼
+                    ┌─────────────────────────────┐
+                    │   Database (ebiz.board)             │
+                    │   password = "pU4nAaB..."        │
+                    │   (AES encrypted, Base64 encoded)  │
                     └─────────────────────────────┘
 ```
 
-## Password Encryption Flow (Current Implementation)
+## Password Encryption Flow (Vault kv-v2 Fernet Key)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     Password Handling Flow                          │
 │                                                                     │
-│    User Input (Password)                                           │
+│    User Input (Password: "vaulttest123")                          │
 │         │                                                          │
 │         ▼                                                          │
 │    ┌─────────────────┐      ┌─────────────────────────────┐       │
 │    │ BoardService.java│      │ PasswordService.java         │       │
 │    │ - save()         │─────▶│ - encryptPassword()          │       │
-│    │ - update()       │      │ - AES Algorithm              │       │
-│    └─────────────────┘      │ - Key: "MySecretKey12345"   │       │
-│                              │   (HARDCODED - NOT FROM VAULT)│     │
+│    │ - update()       │      │ - Uses Vault Fernet key    │       │
+│    └─────────────────┘      └──────────────┬──────────────┘       │
+│                                            │                      │
+│                              ┌─────────────▼──────────────┐       │
+│                              │   Fernet Key (byte[32])    │       │
+│                              │   ↓                         │       │
+│                              │   AES-128 Encryption       │       │
+│                              │   (first 16 bytes)        │       │
 │                              └──────────────┬──────────────┘       │
 │                                            │                      │
-│                                            ▼                      │
-│                              ┌─────────────────────────────┐       │
+│                              ┌─────────────▼──────────────┐       │
 │                              │   AES Encryption            │       │
 │                              │   → Base64 Encoded         │       │
+│                              │   Output: pU4nAaB...==    │       │
 │                              └──────────────┬──────────────┘       │
 │                                            │                      │
 │                                            ▼                      │
 │                              ┌─────────────────────────────┐       │
 │                              │   Database (ebiz.board)     │       │
-│                              │   password = "IdKBPP2o..."  │       │
-│                              │   (Encrypted)               │       │
+│                              │   password = "pU4nAaB..."  │       │
+│                              │   (AES encrypted)            │       │
 │                              └─────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Intended Architecture (To-Be) - With Full Vault Integration
+## Vault kv-2 Integration Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
+┌─────────────────────────────────────────────────────────────┐
 │                        demoApp (Spring Boot)                       │
 │                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  @Configuration                                               │   │
-│  │  public class VaultConfig extends AbstractVaultConfiguration { │   │
-│  │      vaultEndpoint() → 192.168.2.57:8200                    │   │
-│  │      clientAuthentication() → Token (from app.properties)    │   │
-│  │  }                                                           │   │
-│  └───────────────────────┬──────────────────────────────────────┘   │
-│                          │                                          │
-│  ┌───────────────────────▼──────────────────────────────────────┐   │
-│  │  Spring Cloud Vault Auto-Configuration                       │   │
-│  │  - Reads spring.cloud.vault.* properties                     │   │
-│  │  - Connects to Vault with token authentication              │   │
-│  │  - fail-fast=false → App starts even if Vault is down       │   │
-│  └───────────────────────┬──────────────────────────────────────┘   │
-└──────────────────────────┼───────────────────────────────────────────┘
-                           │
-                           │ HTTP REST API
-                           │ Token: VAULT_TOKEN_PLACEHOLDER
-                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                    HashiCorp Vault Server                            │
-│                    192.168.2.57:8200                                │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │  Secret Backend: kv-v2                                       │   │
-│  │  Path: secret/demoApp                                         │   │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  @Service                                                   │   │
+│  │  public class PasswordService {                                 │   │
+│  │      private final VaultOperations vaultOperations;               │   │
+│  │      private byte[] encryptionKey;                              │   │
 │  │                                                                │   │
-│  │  ┌──────────────────┐  ┌──────────────────┐  ┌───────────┐ │   │
-│  │  │ db.password      │  │ encryption.key   │  │ api.token  │ │   │
-│  │  │ = "REDACTED_DB_PASSWORD"        │  │ = "MySecret..."  │  │ = "..."    │ │   │
-│  │  └──────────────────┘  └──────────────────┘  └───────────┘ │   │
-│  └──────────────────────────────────────────────────────────────┘   │
+│  │      public PasswordService(VaultOperations vaultOps) {         │   │
+│  │          this.vaultOperations = vaultOps;                        │   │
+│  │          loadEncryptionKey();                                   │   │
+│  │      }                                                       │   │
+│  │                                                                │   │
+│  │      private void loadEncryptionKey() {                         │   │
+│  │          VaultResponse response =                              │   │
+│  │              vaultOperations.read("ebiz_service/                     │   │
+│  │                        data/ebiz_db/data-enc-key");               │   │
+│  │          // kv-v2 response structure:                           │   │
+│  │          // {"data": {"data": {...}, "metadata": {...}}       │   │
+│  │          Map<String, Object> outerData = response.getData();     │   │
+│  │          Map<String, Object> secretData =                      │   │
+│  │              (Map<String, Object>) outerData.get("data");      │   │
+│  │          String fernetKeyBase64 =                              │   │
+│  │              (String) secretData.get("fernet-key");            │   │
+│  │          // Decode URL-safe Base64 (uses '-' and '_')          │   │
+│  │          this.encryptionKey =                                 │   │
+│  │              Base64.getUrlDecoder().decode(fernetKeyBase64);     │   │
+│  │      }                                                       │   │
+│  │  }                                                           │   │
+│  └──────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                            │
+                            │ VaultOperations.read()
+                            │ HTTP REST API (Token Auth)
+                            ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    HashiCorp Vault Server (kv-v2)                 │
+│                    192.168.2.57:8200                           │
 │                                                                     │
-│  Vault CLI example:                                                  │
-│  $ vault kv put secret/demoApp db.password="REDACTED_DB_PASSWORD"                   │
-│  $ vault kv put secret/demoApp encryption.key="MySecretKey12345"    │
-└─────────────────────────────────────────────────────────────────────┘
-                           │
-                           │ Secret Injection
-                           ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                   Application Runtime                                │
-│                                                                     │
-│  ┌──────────────────┐      ┌─────────────────────────────┐        │
-│  │ @Value("${db.password}")                                      │        │
-│  │ or                                                           │        │
-│  │ @VaultPropertySource("secret/demoApp")         │        │
-│  └──────────────────┘      ┌─────────────────────────────┐        │
-│                              │   Database Config            │        │
-│                              │   - password from Vault      │        │
-│                              └──────────────┬──────────────┘        │
-│                                            │                      │
-│                              ┌─────────────▼──────────────┐       │
-│                              │   PasswordService           │       │
-│                              │   - key from Vault         │       │
-│                              │   (instead of hardcoded)   │       │
-│                              └────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────┘
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │  Mount: ebiz_service (kv-v2 versioned backend)            │       │
+│  │                                                                │       │
+│  │  Path: ebiz_db/data-enc-key                                │       │
+│  │  Full API Path: /v1/ebiz_service/data/ebiz_db/data-enc-key │       │
+│  │                                                                │       │
+│  │  ┌────────────────────────────────────────────────┐      │       │
+│  │  │  Vault read response:                           │      │       │
+│  │  │  {                                             │      │       │
+│  │  │    "data": {                                  │      │       │
+│  │  │      "data": {                                │      │       │
+│  │  │        "description": "encryption key for...", │      │       │
+│  │  │        "fernet-key": "NgqO...=="              │      │       │
+│  │  │      },                                         │      │       │
+│  │  │      "metadata": { ... }                        │      │       │
+│  │  │    }                                           │      │       │
+│  │  │  }                                             │      │       │
+│  │  └────────────────────────────────────────────────┘      │       │
+│  └──────────────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-## Configuration Flow Diagram
+## Vault Secret Structure (kv-v2)
 
 ```
-START
+# Enable kv-v2 backend
+vault secrets enable -path=ebiz_service kv-v2
+
+# Store Fernet key
+vault kv put -mount=ebiz_service ebiz_db/data-enc-key \
+    fernet-key="NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y=" \
+    description="encryption key for ebiz db column"
+
+# Read secret (kv-v2 adds 'data/' to path)
+vault kv get -mount=ebiz_service ebiz_db/data-enc-key
+
+        │
+        ▼
+┌──────────────────────────────────────────────────────┐
+│  Vault Path: ebiz_service/data/ebiz_db/data-enc-key    │
+│                                                    │
+│  ======== Secret Path =============                 │
+│  ebiz_service/data/ebiz_db/data-enc-key            │
+│                                                    │
+│  ======= Metadata =======                       │
+│  Key                Value                        │
+│  ---                -----                        │
+│  created_time       2026-05-06T11:32:48...         │
+│  version            1                              │
+│                                                    │
+│  ======= Data =======                         │
+│  Key            Value                            │
+│  ---            -----                            │
+│  description    encryption key for ebiz db column │
+│  fernet-key     NgqOBievnB9500cQOnSQ-...        │
+└──────────────────────────────────────────────────────┘
+        │
+        ▼
+┌──────────────────────────────────────────────────────┐
+│  Fernet Key Structure (32 bytes total)               │
+│                                                    │
+│  ┌──────────────────┬──────────────────┐         │
+│  │  Bytes 0-15     │  Bytes 16-31    │         │
+│  │  AES-128 Key    │  HMAC-SHA256   │         │
+│  │  (16 bytes)     │  (16 bytes)    │         │
+│  └──────────────────┴──────────────────┘         │
+│                                                    │
+│  Format: URL-safe Base64 (uses '-' and '_')        │
+│  Example: NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y= │
+└──────────────────────────────────────────────────────┘
+        │
+        ▼ (Base64.getUrlDecoder().decode())
+┌──────────────────────────────────────────────────────┐
+│  encryptionKey = byte[32]                          │
+│  - encryptionKey[0..15] → AES-128 secret key       │
+│  - encryptionKey[16..31] → HMAC-SHA256 key (unused) │
+└──────────────────────────────────────────────────────┘
+```
+
+## Configuration Files
+
+### application.properties
+```properties
+# Vault Configuration
+spring.cloud.vault.uri=http://192.168.2.57:8200
+spring.cloud.vault.token=VAULT_TOKEN_PLACEHOLDER
+spring.cloud.vault.fail-fast=false
+```
+
+### Vault Server
+```bash
+# Vault Address
+VAULT_ADDR='http://192.168.2.57:8200'
+VAULT_TOKEN='VAULT_TOKEN_PLACEHOLDER'
+
+# Check Vault status
+curl http://192.168.2.57:8200/v1/sys/health
+
+# Read Fernet key
+vault kv get -mount=ebiz_service ebiz_db/data-enc-key
+```
+
+## How It Works (Step by Step)
+
+```
+START Application
   │
   ▼
 ┌─────────────────────┐
-│ Application Startup  │
-└─────────┬───────────┘
-          │
-          ▼
+│ PasswordService    │
+│ Constructor       │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────────┐
+│ loadEncryptionKey()│
+└────────┬────────┘
+         │
+         ▼
 ┌─────────────────────────────────────────┐
-│ Read application.properties             │
-│ - spring.cloud.vault.uri                │
-│ - spring.cloud.vault.token              │
-│ - spring.cloud.vault.fail-fast=false    │
-└─────────┬───────────────────────────────┘
-          │
-          ▼
+│ vaultOperations.read(                       │
+│   "ebiz_service/data/ebiz_db/data-enc-key")│
+└────────┬────────────────────────────────┘
+         │ HTTP Request to Vault
+         ▼
 ┌─────────────────────────────────────────┐
-│ Spring Cloud Vault Auto-Config         │
-│ - Initialize VaultTemplate             │
-│ - Setup PropertySource for secrets     │
-└─────────┬───────────────────────────────┘
-          │
-          ├───[Vault Available]───▶ Read secrets from secret/demoApp
-          │                              │
-          │                              ▼
-          │                    Inject into @Value / @ConfigurationProperties
-          │
-          └───[Vault Unavailable]───▶ (fail-fast=false)
-                                         │
-                                         ▼
-                                    App continues with:
-                                    - Defaults
-                                    - Environment variables
-                                    - Hardcoded values (NOT SECURE)
+│ Vault Response (kv-v2):                    │
+│ {                                          │
+│   "data": {                               │
+│     "data": {                             │
+│       "fernet-key": "NgqO...==",          │
+│       "description": "..."                 │
+│     },                                     │
+│     "metadata": {...}                      │
+│   }                                        │
+│ }                                          │
+└────────┬────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ outerData = response.getData()              │
+│ secretData = outerData.get("data")          │
+│ fernetKeyBase64 = secretData.get("fernet-key") │
+└────────┬────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ Base64.getUrlDecoder().decode(fernetKeyBase64) │
+│ → byte[32] (URL-safe Base64 decoding)   │
+└────────┬────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────┐
+│ this.encryptionKey = decoded bytes          │
+│ (ready for AES encryption)                │
+└─────────────────────────────────────┘
+         │
+         ▼
+Application Ready ✅
 ```
 
-## Secret Path Structure in Vault
+## Verification (Tested 2026-05-07)
 
-```
-vault secrets enable -path=secret kv-v2
-        │
-        ▼
-vault kv put secret/demoApp \
-    db.username="postgres" \
-    db.password="REDACTED_DB_PASSWORD" \
-    encryption.key="MySecretKey12345" \
-    vault.token="hvs.newTokenIfNeeded"
+| Test Case | Result | Details |
+|-----------|--------|---------|
+| App Startup | ✅ Success | Reads Fernet key from Vault |
+| POST /api/v1/posts | ✅ Success | Post ID 2017587 created |
+| Password Encryption | ✅ Success | `pU4nAaB...==` stored in DB |
+| Vault Unavailable | ⚠️ Graceful | fail-fast=false, app continues |
+| Fernet Key Invalid | ❌ Error | RuntimeException with details |
 
-        │
-        ▼
-┌────────────────────────────────────────────┐
-│  vault kv get secret/demoApp               │
-│                                            │
-│  Key              Value                     │
-│  ─────────────────────────────────────     │
-│  db.username      postgres                  │
-│  db.password      REDACTED_DB_PASSWORD                     │
-│  encryption.key   MySecretKey12345         │
-│  vault.token      hvs.newTokenIfNeeded     │
-└────────────────────────────────────────────┘
-```
+### Database Verification
+```sql
+SELECT id, title, password FROM ebiz.board WHERE id = 2017587;
 
-## Current vs Target State
-
-| Component              | Current State               | Target State                |
-|------------------------|----------------------------|----------------------------|
-| Vault Endpoint         | 192.168.2.57:8200         | 192.168.2.57:8200         |
-| Authentication        | Token (in app.properties)  | Token (in app.properties)  |
-| DB Password           | Hardcoded in app.properties| From Vault secret          |
-| Encryption Key        | Hardcoded in Java          | From Vault secret          |
-| Fail-fast             | false                      | false (dev) / true (prod) |
-| Secret Path           | Not configured             | secret/demoApp            |
-| Fallback              | App continues              | App continues (graceful)  |
-
-## How to Complete Vault Integration
-
-### Step 1: Configure Secrets in Vault
-```bash
-# On Vault server (192.168.2.57)
-export VAULT_ADDR='http://192.168.2.57:8200'
-export VAULT_TOKEN='VAULT_TOKEN_PLACEHOLDER'
-
-# Store secrets
-vault kv put secret/demoApp \
-    db.username="postgres" \
-    db.password="REDACTED_DB_PASSWORD" \
-    encryption.key="MySecretKey12345"
-```
-
-### Step 2: Update application.properties
-```properties
-# Remove hardcoded values, let Vault inject them
-spring.datasource.username=${db.username}
-spring.datasource.password=${db.password}
-```
-
-### Step 3: Update PasswordService.java
-```java
-@Service
-public class PasswordService {
-    
-    @Value("${encryption.key}")
-    private String encryptionKey;  // Injected from Vault
-    
-    private byte[] getSecretKey() {
-        return encryptionKey.getBytes();
-    }
-    // ... rest of the code
-}
-```
-
-### Step 4: Verify
-```bash
-# Check Vault connection
-curl http://192.168.2.57:8200/v1/sys/health
-
-# Deploy and test
-./deploy.sh
-
-# Check logs for Vault integration
-ssh xaan@192.168.2.57 "tail -f /home/xaan/ws/demoBBS/log/demoBBS-$(date +%Y-%m-%d).log | grep -i vault"
+   id    |     title      |         password         
+---------+----------------+--------------------------
+ 2017587 | Test Vault Key | pU4nAaBrwqPKLoV1Waa/tw==
 ```
 
 ## Security Notes
 
-⚠️ **Current Issues:**
-1. Vault token is hardcoded in `application.properties` (should be env var)
-2. Encryption key is hardcoded in `PasswordService.java` (should come from Vault)
-3. DB password is in `application.properties` (should come from Vault)
-4. `VaultConfig.java` has `localhost:8200` but `application.properties` overrides it
+✅ **What's Implemented:**
+1. Fernet key read from Vault kv-v2 at startup
+2. URL-safe Base64 decoding for Fernet key format
+3. AES-128 encryption with CBC mode
+4. Base64 output for database storage
 
-✅ **What's Good:**
-1. `fail-fast=false` prevents app crash if Vault is down
-2. Spring Cloud Vault is properly configured as dependency
-3. Secret backend and path are defined
+⚠️ **Security Considerations:**
+1. Vault token in `application.properties` (file is in `.gitignore`)
+2. Fernet key contains HMAC-SHA256 portion (currently unused)
+3. Vault communication uses HTTP (not HTTPS) - enable TLS for production
+4. Consider using AppRole authentication instead of Token for production
 
-🔒 **Security Best Practices:**
+🔒 **Best Practices:**
 - Rotate Vault tokens regularly
-- Use AppRole authentication instead of Token for production
 - Enable Vault audit logging
 - Restrict network access to Vault (firewall rules)
 - Use TLS/HTTPS for Vault communication
+- Consider implementing key rotation for encryption keys
