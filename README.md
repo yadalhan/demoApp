@@ -67,26 +67,44 @@ spring.application.name=demo
 spring.jpa.database=postgresql
 spring.jpa.hibernate.ddl-auto=update
 spring.jpa.show-sql=true
-spring.datasource.url=jdbc:postgresql://localhost:5432/demodb
-spring.datasource.username=postgres
-spring.datasource.password=password
+spring.datasource.url=jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/limadb?currentSchema=${DB_SCHEMA:ebiz}
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD:changeme}
 ```
 
-For Vault integration:
+### Vault Configuration (Updated 2026-05-06)
 ```properties
-spring.cloud.vault.uri=http://localhost:8200
-spring.cloud.vault.token=your-vault-token
+spring.cloud.vault.uri=${VAULT_URI:http://localhost:8200}
+spring.cloud.vault.token=${VAULT_TOKEN:hvs.CHECK_VAULT_FOR_TOKEN}
+spring.cloud.vault.generic.enabled=true
+spring.cloud.vault.generic.backend=secret
+spring.cloud.vault.generic.application-name=demoApp
+spring.cloud.vault.fail-fast=false
 ```
+
+> **Note**: Vault secret path `secret/demoApp` needs to be configured in Vault for full integration. 
+> See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details.
 
 ## Building the Project
 
-### Using the provided build script:
+> **⚠️ Build Environment Notes:**
+> - **JAVA_HOME**: `/usr/lib/jvm/java-17-openjdk-amd64` (Required: Project needs Java 17, system default is Java 8)
+> - **GRADLE_HOME**: `/opt/gradle/gradle-8.7` (Optional: Project uses Gradle wrapper `./gradlew`)
+> - Always set JAVA_HOME before building, or use the provided scripts that handle this automatically.
+
+### Using the provided build script (Recommended):
 ```bash
+# This script automatically sets JAVA_HOME and PATH
 ./build-with-env.sh
 ```
 
 ### Using Gradle wrapper:
 ```bash
+# Set environment variables first
+export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export PATH=$JAVA_HOME/bin:$PATH
+export PATH=/opt/gradle/gradle-8.7/bin:$PATH
+
 # Build the project
 ./gradlew clean build
 
@@ -97,10 +115,10 @@ spring.cloud.vault.token=your-vault-token
 ./gradlew bootRun
 ```
 
-### Using specified environment:
+### Quick build with environment:
 ```bash
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-export PATH=/opt/gradle/gradle-8.7/bin:$PATH
+export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 ./gradlew clean build
 ```
 
@@ -108,26 +126,37 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 
 1. **Build the JAR:**
    ```bash
+   export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+   export PATH=$JAVA_HOME/bin:$PATH
    ./gradlew clean build
    ```
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.2-SNAPSHOT.jar
+   java -jar build/libs/xaandemo-0.0.3-SNAPSHOT.jar
    ```
 
 3. **Access the application:**
    - Main page: http://localhost:8080
-   - API endpoints: http://localhost:8080/api/boards
+   - API endpoints: http://localhost:8080/api/v1/posts
+   - Last 100: http://localhost:8080/last100
 
 ## API Endpoints
 
-### Board Management
-- `GET /api/boards` - Get all boards
-- `GET /api/boards/{id}` - Get board by ID
-- `POST /api/boards` - Create new board
-- `PUT /api/boards/{id}` - Update board
-- `DELETE /api/boards/{id}` - Delete board
+### Board Management (REST API)
+- `GET /api/v1/posts` - Get all posts (405 for GET, use POST to create)
+- `GET /api/v1/posts/{id}` - Get post by ID
+- `POST /api/v1/posts` - Create new post (with optional password)
+- `PUT /api/v1/posts/{id}` - Update post (with optional password)
+- `DELETE /api/v1/posts/{id}` - Delete post
+
+### Web Pages
+- `GET /` - Main page (index)
+- `GET /posts/save` - Post creation form
+- `GET /posts/update/{id}` - Post update form
+- `GET /last100` - Last 100 posts listing
+- `GET /list1st` - First page listing
+- `GET /list1stonly` - First page only listing
 
 ### Pagination
 - `GET /api/boards/page` - Get paginated boards (first page)
@@ -135,40 +164,68 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 
 ## Database Schema
 
-The application uses the following main entity:
+The application uses the following main entity in schema `ebiz`:
 
 ```sql
-CREATE TABLE board (
+CREATE TABLE ebiz.board (
     id BIGSERIAL PRIMARY KEY,
     title VARCHAR(500) NOT NULL,
     content TEXT NOT NULL,
     author VARCHAR(100),
-    password VARCHAR(255),
+    password VARCHAR(255), -- AES encrypted (Base64 encoded)
     created_date TIMESTAMP,
     modified_date TIMESTAMP
 );
 ```
 
+> **Password Storage**: Passwords are encrypted using AES encryption. 
+> See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
+
 ## Security Features
 
-1. **Password Encryption**: AES encryption for sensitive data
-2. **Vault Integration**: External secrets management
+1. **Password Encryption**: AES encryption with Base64 encoding for passwords (auto-applied on save/update)
+   - Implementation: `PasswordService.java` 
+   - Encryption key managed in `PasswordService` (consider moving to Vault for production)
+   - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
+2. **Vault Integration**: External secrets management with Spring Cloud Vault
+   - Configured to connect to Vault server at `http://192.168.2.57:8200`
+   - Fail-fast disabled to allow startup without Vault
 3. **Input Validation**: Server-side validation
 4. **SQL Injection Protection**: Using JPA prepared statements
 
 ## Deployment
 
+### Using deploy.sh (Recommended)
+The project includes a deployment script for production server (192.168.2.57):
+
+```bash
+./deploy.sh
+```
+
+This script will:
+1. Build the application with Java 17
+2. Distribute the JAR to production server
+3. Stop the running application
+4. Start the new version
+5. Verify the deployment
+
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.2-SNAPSHOT.jar app.jar
+COPY build/libs/xaandemo-0.0.3-SNAPSHOT.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `./gradlew clean build`
-2. Copy JAR to server: `scp build/libs/*.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.2-SNAPSHOT.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.3-SNAPSHOT.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.3-SNAPSHOT.jar`
+
+### Production Server Details
+- **Host**: 192.168.2.57
+- **User**: xaan
+- **App Directory**: `/home/xaan/ws/demoBBS/app`
+- **Application URL**: http://192.168.2.57:8080
 
 ## Development
 

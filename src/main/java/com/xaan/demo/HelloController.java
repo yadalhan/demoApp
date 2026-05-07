@@ -10,4 +10,9 @@ public class HelloController {
     public String sayHello(){
         return "안녕하세요. 시작해 볼까요?";
     }
+
+    @GetMapping("/health")
+    public String health() {
+        return "OK";
+    }
 }

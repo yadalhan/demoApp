@@ -10,6 +10,7 @@ import java.util.List;
 
 public interface BoardRepository extends JpaRepository<Board,Long> {
     List<Board>  findAllByOrderByIdDesc();
-    Page<Board>  findFirstPageByOrderByIdDesc(Pageable pageable);
-    Slice<Board> findFirstPageOnlyByOrderByIdDesc(Pageable pageable);
+    Page<Board>  findAllByOrderByIdDesc(Pageable pageable);
+    Slice<Board> findByOrderByIdDesc(Pageable pageable);
+    List<Board>  findTop100ByOrderByIdDesc();
 }

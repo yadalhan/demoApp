@@ -1,1 +1,65 @@
-[{'type="text" class="form-control" id="author': 'author'}, {'type="password" class="form-control" id="password': 'password'}, {'type="submit" class="btn btn-primary': 'Update'}, {'type="button" class="btn btn-secondary" onclick="location.href=\'/\'"': 'Cancel'}]
+<!DOCTYPE HTML>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <title>글 수정</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container mt-5">
+        <h1>🚀 게시글 수정</h1>
+        <form id="updateForm">
+            <input type="hidden" id="id" th:value="${post.id}">
+            <div class="mb-3">
+                <label for="title" class="form-label">제목</label>
+                <input type="text" class="form-control" id="title" name="title" th:value="${post.title}" required>
+            </div>
+            <div class="mb-3">
+                <label for="content" class="form-label">내용</label>
+                <textarea class="form-control" id="content" name="content" rows="5" required th:text="${post.content}"></textarea>
+            </div>
+            <div class="mb-3">
+                <label for="password" class="form-label">비밀번호</label>
+                <input type="password" class="form-control" id="password" name="password" required>
+                <div class="form-text">수정하려면 비밀번호를 입력하세요.</div>
+            </div>
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">수정</button>
+                <button type="button" class="btn btn-secondary" onclick="location.href='/'">취소</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script th:inline="javascript">
+        /*<![CDATA[*/
+        var postId = /*[[${post.id}]]*/ null;
+        /*]]>*/
+        document.getElementById('updateForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const data = {
+                title: document.getElementById('title').value,
+                content: document.getElementById('content').value,
+                password: document.getElementById('password').value
+            };
+            fetch('/api/v1/posts/' + postId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                if (response.ok) {
+                    alert('게시글이 수정되었습니다.');
+                    location.href = '/';
+                } else {
+                    alert('수정 중 오류가 발생했습니다.');
+                }
+            })
+            .catch(error => {
+                alert('수정 중 오류가 발생했습니다.');
+                console.error(error);
+            });
+        });
+    </script>
+</body>
+</html>

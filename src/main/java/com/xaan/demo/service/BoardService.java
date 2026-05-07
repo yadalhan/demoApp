@@ -21,11 +21,16 @@ import java.util.stream.Collectors;
 @Service
 public class BoardService {
     private final BoardRepository boardRepository;
+    private final PasswordService passwordService;
 
     // 1. save
     @Transactional
     public Long save(BoardSaveRequestDto requestDto) {
-        return boardRepository.save(requestDto.toEntity()).getId();
+        Board board = requestDto.toEntity();
+        if (board.getPassword() != null && !board.getPassword().isEmpty()) {
+            board.updatePassword(passwordService.encryptPassword(board.getPassword()));
+        }
+        return boardRepository.save(board).getId();
     }
 
     // 2. update
@@ -35,6 +40,9 @@ public class BoardService {
                 .orElseThrow(() -> new IllegalArgumentException("no ariticle for id=" + id));
         // Dirty Checking: if colum is updated in this transaction, execute update query automatically
         board.update(requestDto.getTitle(), requestDto.getContent());
+        if (requestDto.getPassword() != null && !requestDto.getPassword().isEmpty()) {
+            board.updatePassword(passwordService.encryptPassword(requestDto.getPassword()));
+        }
         return id;
     }
 
@@ -55,7 +63,7 @@ public class BoardService {
     @Transactional(readOnly = true)
     public Page<BoardResponseDto> getBoardList(Pageable pageable) {
             Pageable pageRequest = PageRequest.of(0, 10, Sort.by("id").descending());
-            Page<Board> boardPage = boardRepository.findFirstPageByOrderByIdDesc(pageRequest);
+            Page<Board> boardPage = boardRepository.findAllByOrderByIdDesc(pageRequest);
             return boardPage.map(BoardResponseDto::new);
     }
 
@@ -63,7 +71,14 @@ public class BoardService {
     public Slice<BoardResponseDto> getBoardList1stOnly(Pageable pageable) {
             // 0페이지, 10개씩, ID 내림차순
             Pageable pageRequest = PageRequest.of(0, 10, Sort.by("id").descending());
-            Slice<Board> boardPage = boardRepository.findFirstPageOnlyByOrderByIdDesc(pageRequest);
+            Slice<Board> boardPage = boardRepository.findByOrderByIdDesc(pageRequest);
             return boardPage.map(BoardResponseDto::new);
+    }
+
+    @Transactional(readOnly = true)
+    public List<BoardResponseDto> findLast100() {
+        return boardRepository.findTop100ByOrderByIdDesc().stream()
+                .map(BoardResponseDto::new)
+                .collect(Collectors.toList());
     }
 }

@@ -9,7 +9,18 @@ import java.util.Base64;
 public class PasswordService {
     
     private static final String AES_ALGORITHM = "AES";
-    private static final byte[] SECRET_KEY = "MySecretKey12345".getBytes(); // In production, use proper key management
+    private static final String ENV_ENCRYPTION_KEY = "ENCRYPTION_SECRET_KEY";
+    private static final byte[] SECRET_KEY;
+    
+    static {
+        String keyFromEnv = System.getenv(ENV_ENCRYPTION_KEY);
+        if (keyFromEnv != null && !keyFromEnv.isEmpty()) {
+            SECRET_KEY = keyFromEnv.getBytes();
+        } else {
+            // Fallback for development only - CHANGE THIS IN PRODUCTION
+            SECRET_KEY = "CHANGE_ME_PRODUCTION_KEY".getBytes();
+        }
+    } // Configure via ENCRYPTION_SECRET_KEY environment variable
     
     public String encryptPassword(String password) {
         try {

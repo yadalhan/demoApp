@@ -76,3 +76,9 @@ target/
 ### Vault/secret files ###
 **/*.vault
 **/*.secret
+
+# Sensitive project files (tokens, passwords, credentials)
+# Excluded from git to prevent leaking secrets
+AGENTS.md
+VAULT_AND_ENCRYPTION.md
+src/main/resources/application.properties
