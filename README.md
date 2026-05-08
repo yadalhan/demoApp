@@ -12,7 +12,7 @@ A Spring Boot demo application with comprehensive features for board/article man
 - **Vault configuration** for secrets management
 - **Gradle build system** with wrapper
 - **Spring Cloud Vault** integration
-- **Password encryption service** with AES
+- **Password encryption service** - Using `vault-crypto` package (separate JAR)
 - **Pagination support** for board listings
 
 ## Project Structure
@@ -38,7 +38,7 @@ src/main/java/com/xaan/demo/
 │   └── BoardUpdateRequestDto.java # Update request DTO
 └── service/
     ├── BoardService.java         # Business logic service
-    └── PasswordService.java      # Password encryption service
+    └── PasswordService.java      # Password encryption service (uses vault-crypto)
 
 src/main/resources/
 ├── application.properties        # Application configuration
@@ -90,11 +90,17 @@ spring.cloud.vault.fail-fast=false
 - **Server**: 192.168.2.57:8200
 
 ### How It Works
-1. **PasswordService** uses `VaultOperations.read()` to read Fernet key
-2. The Fernet key is URL-safe Base64 decoded (32 bytes total)
-3. Full 32-byte key used for AES-256 encryption/decryption (ECB mode)
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.1-SNAPSHOT`) provides encryption
+2. `PasswordService` delegates to `VaultCryptoService` for encrypt/decrypt
+3. Vault key is read at startup and used for AES-256 (ECB mode)
 4. Passwords stored as Base64-encoded encrypted strings in DB
 5. Python decryption script available for verification (`decrypt_passwords.py`)
+
+### vault-crypto Package
+Encryption functionality is extracted into a separate package:
+- **Location**: `/home/xaan/opencode/projects/vault-crypto/`
+- **Build**: `./gradlew build publishToMavenLocal`
+- **Usage**: See `vault-crypto/README.md` for details
 
 ### Setting up Vault Secrets
 ```bash
@@ -206,17 +212,20 @@ CREATE TABLE ebiz.board (
 );
 ```
 
-> **Password Storage**: Passwords are encrypted using AES-256 (ECB mode) with Vault-sourced key.
+> **Password Storage**: Passwords are encrypted using `vault-crypto` package (AES-256, ECB mode).
 > See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
 > Python decryption script (`decrypt_passwords.py`) available for verification.
+> vault-crypto package: `/home/xaan/opencode/projects/vault-crypto/README.md`
 
 ## Security Features
 
-1. **Password Encryption**: AES-256 encryption with Base64 encoding for passwords (auto-applied on save/update)
-   - Implementation: `PasswordService.java`
+1. **Password Encryption**: AES-256 encryption via `vault-crypto` package
+   - Implementation: `PasswordService.java` uses `VaultCryptoService`
    - Encryption key from Vault kv-v2 (32-byte Fernet key as AES-256 key)
+   - Package: `com.xaan:vault-crypto:0.0.1-SNAPSHOT`
    - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
    - Python decryption script available for testing (`decrypt_passwords.py`)
+   - ✅ **Production tested** (2026-05-08): Encryption/decryption verified
 
 2. **Vault Integration**: External secrets management with Spring Cloud Vault
 2. **Vault Integration**: External secrets management with Spring Cloud Vault
