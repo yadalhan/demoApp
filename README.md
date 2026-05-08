@@ -92,7 +92,7 @@ spring.cloud.vault.fail-fast=false
 ### How It Works
 1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.1`) provides encryption
 2. `PasswordService` delegates to `VaultCryptoService` for encrypt/decrypt
-3. Vault key is read at startup and used for AES-256 (ECB mode)
+3. Vault key is read at startup and used for AES-256 (GCM mode)
 4. Passwords stored as Base64-encoded encrypted strings in DB
 5. Python decryption script available for verification (`decrypt_passwords.py`)
 
@@ -212,7 +212,7 @@ CREATE TABLE ebiz.board (
 );
 ```
 
-> **Password Storage**: Passwords are encrypted using `vault-crypto` package (AES-256, ECB mode).
+> **Password Storage**: Passwords are encrypted using `vault-crypto` package (AES-256/GCM/NoPadding, authenticated encryption).
 > See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
 > Python decryption script (`decrypt_passwords.py`) available for verification.
 > vault-crypto package: `/home/xaan/opencode/projects/vault-crypto/README.md`
@@ -292,7 +292,7 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 **Security & Refactoring Release** - Password encryption service refactored to use `vault-crypto` package.
 
 **Security Improvements:**
-- Password encryption implemented using `vault-crypto` package (AES-256 ECB, PKCS5 padding)
+- Password encryption implemented using `vault-crypto` package (AES-256 GCM, NoPadding)
 - Encryption key loaded from HashiCorp Vault kv-v2 backend at startup
 - Old plain-text passwords migrated to encrypted format
 - Python decryption script (`decrypt_passwords.py`) for verification

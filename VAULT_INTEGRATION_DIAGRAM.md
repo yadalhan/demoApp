@@ -82,7 +82,7 @@ See `/home/xaan/opencode/projects/vault-crypto/README.md` for details.
 │                          │   (from vault-crypto)    │       │
 │                          │   ↓                       │       │
 │                          │   AES-256 Encryption      │       │
-│                          │   (ECB mode, 32 bytes) │       │
+│                          │   (GCM mode, 32 bytes) │       │
 │                          └────────────┬──────────────┘       │
 │                                       │                     │
 │                          ┌────────────▼──────────────┐      │
@@ -363,14 +363,14 @@ SELECT id, title, password FROM ebiz.board WHERE id = 2017587;
 ✅ **What's Implemented:**
 1. Fernet key read from Vault kv-v2 at startup
 2. URL-safe Base64 decoding for Fernet key format
-3. AES-256 encryption with ECB mode (PKCS5 padding)
+3. AES-256 encryption with GCM mode (authenticated encryption with IV)
 4. Base64 output for database storage
 5. Python decryption script for password verification
 6. **vault-crypto package** - Separate JAR for encryption (reusable)
 
 ⚠️ **Security Considerations:**
 1. Vault token in `application.properties` (file is in `.gitignore`)
-2. Fernet key is 32 bytes used as AES-256 key (ECB mode)
+2. Fernet key is 32 bytes used as AES-256 key (GCM mode)
 3. Vault communication uses HTTP (not HTTPS) - enable TLS for production
 4. Consider using AppRole authentication instead of Token for production
 5. **vault-crypto package** - Can be reused by other Spring Boot applications

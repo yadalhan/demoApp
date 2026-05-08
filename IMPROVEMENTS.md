@@ -21,12 +21,12 @@ And ensure `.gitignore` includes:
 ```
 
 ### 2. Insecure ECB Encryption Mode (CRYPTOGRAPHIC)
-**Location**: `vault-crypto/src/main/java/com/xaan/vault/crypto/VaultCryptoService.java`
-**Issues**: 
+**Status**: ✅ RESOLVED (2026-05-08) - GCM mode implemented in `vault-crypto:0.0.1`
+**Previous Issues**:
 - Line 18: `private static final String AES_ALGORITHM = "AES";` (defaults to ECB)
 - Lines 74, 91: `Cipher.getInstance(AES_ALGORITHM);`
 
-**Fix**: Use authenticated encryption mode (GCM)
+**Resolution**: Now using authenticated encryption mode (GCM)
 ```java
 private static final String AES_ALGORITHM = "AES/GCM/NoPadding";
 private static final int GCM_TAG_LENGTH_BITS = 128;
@@ -260,9 +260,9 @@ Add clear documentation about:
 3. Implement environment variable-based token configuration
 
 **P1 (High - Cryptographic)**:
-1. Switch from ECB to GCM mode
-2. Implement proper authenticated encryption
-3. Add custom exception hierarchy
+1. ✅ Switch from ECB to GCM mode - DONE in vault-crypto v0.0.1
+2. ✅ Implement proper authenticated encryption - DONE
+3. ✅ Add custom exception hierarchy - DONE (KeyLoadingException)
 
 **P2 (Medium - Robustness)**:
 1. Make Vault path configurable

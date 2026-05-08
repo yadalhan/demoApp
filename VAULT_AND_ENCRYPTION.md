@@ -13,9 +13,9 @@ The encryption functionality has been extracted into a separate package `vault-c
 ### Package Details
 - **Group ID**: `com.xaan`
 - **Artifact ID**: `vault-crypto`
-- **Version**: `0.0.1-SNAPSHOT`
+- **Version**: `0.0.1`
 - **Build**: Gradle 8.7, Java 17
-- **Output**: `vault-crypto-0.0.1-SNAPSHOT.jar`
+- **Output**: `vault-crypto-0.0.1.jar`
 
 ### Building vault-crypto
 ```bash
@@ -24,7 +24,7 @@ export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ./gradlew clean build publishToMavenLocal
 ```
 
-This installs the JAR to `~/.m2/repository/com/xaan/vault-crypto/0.0.1-SNAPSHOT/`.
+This installs the JAR to `~/.m2/repository/com/xaan/vault-crypto/0.0.1/`.
 
 ### Using vault-crypto in demoApp
 **build.gradle:**
@@ -35,7 +35,7 @@ repositories {
 }
 
 dependencies {
-    implementation 'com.xaan:vault-crypto:0.0.1-SNAPSHOT'
+    implementation 'com.xaan:vault-crypto:0.0.1'
 }
 ```
 
@@ -107,7 +107,7 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 ### Implementation
 demoApp uses the `vault-crypto` package for encryption:
 
-- **Package**: `com.xaan:vault-crypto:0.0.1-SNAPSHOT` (separate JAR)
+- **Package**: `com.xaan:vault-crypto:0.0.1` (separate JAR)
 - **Algorithm**: AES-256 (GCM mode)
 - **Key Source**: Vault kv-v2 (`ebiz_service/data/ebiz_db/data-enc-key`, field: `fernet-key`)
 - **Key Format**: Fernet key (32 bytes, used directly as AES-256 key)
