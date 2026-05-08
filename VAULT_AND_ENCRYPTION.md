@@ -3,6 +3,9 @@
 ## Overview
 This document describes the Vault server configuration and password encryption implementation for the demoApp project.
 
+**Note**: Encryption is now provided by the `vault-crypto` package (separate JAR).
+See `/home/xaan/opencode/projects/vault-crypto/README.md` for usage details.
+
 ## Vault Configuration (Updated 2026-05-08)
 
 ### kv-v2 Backend Configuration
@@ -44,45 +47,37 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 ## Password Encryption
 
 ### Implementation
-`PasswordService.java` uses Vault-sourced Fernet key for AES encryption:
+demoApp uses the `vault-crypto` package for encryption:
 
+- **Package**: `com.xaan:vault-crypto:0.0.1-SNAPSHOT` (separate JAR)
 - **Algorithm**: AES-256 (ECB mode, PKCS5 padding)
 - **Key Source**: Vault kv-v2 (`ebiz_service/data/ebiz_db/data-enc-key`, field: `fernet-key`)
 - **Key Format**: Fernet key (32 bytes, used directly as AES-256 key)
 - **Output**: Base64 encoded string (e.g., `pU4nAaBrwqPKLoV1Waa/tw==`)
 
-**Key Implementation:**
+**Usage in demoApp:**
 ```java
+// PasswordService.java (demoApp)
 @Service
 public class PasswordService {
-    private byte[] encryptionKey;
+    private final VaultCryptoService vaultCryptoService;
 
     public PasswordService(VaultOperations vaultOperations) {
-        // Load Fernet key from Vault kv-v2
-        VaultResponse response = vaultOperations.read("ebiz_service/data/ebiz_db/data-enc-key");
-        Map<String, Object> outerData = response.getData();
-        Map<String, Object> secretData = (Map<String, Object>) outerData.get("data");
-        String fernetKeyBase64 = (String) secretData.get("fernet-key");
-        this.encryptionKey = Base64.getUrlDecoder().decode(fernetKeyBase64);
+        this.vaultCryptoService = new VaultCryptoService(vaultOperations);
     }
 
     public String encryptPassword(String password) {
-        SecretKeySpec secretKey = new SecretKeySpec(encryptionKey, "AES");
-        Cipher cipher = Cipher.getInstance("AES");
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey);
-        return Base64.getEncoder().encodeToString(cipher.doFinal(password.getBytes()));
+        return vaultCryptoService.encrypt(password);
     }
 
     public String decryptPassword(String encryptedPassword) {
-        SecretKeySpec secretKey = new SecretKeySpec(encryptionKey, "AES");
-        Cipher cipher = Cipher.getInstance("AES");
-        cipher.init(Cipher.DECRYPT_MODE, secretKey);
-        byte[] encryptedBytes = Base64.getDecoder().decode(encryptedPassword);
-        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
-        return new String(decryptedBytes);
+        return vaultCryptoService.decrypt(encryptedPassword);
     }
 }
 ```
+
+**vault-crypto Package Details:**
+See `/home/xaan/opencode/projects/vault-crypto/README.md` for full documentation.
 
 ### Database Storage
 Passwords are stored as Base64-encoded AES encrypted strings in `ebiz.board.password`:
