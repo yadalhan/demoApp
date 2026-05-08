@@ -63,6 +63,9 @@ Thumbs.db
 ### Build outputs ###
 target/
 
+### python venv ###
+my_env/
+
 ### Environment files ###
 .env
 .env.local

@@ -8,7 +8,7 @@
 **Fix**:
 ```properties
 # REMOVE THIS LINE:
-# spring.cloud.vault.token=hvs.REDACTED_VAULT_TOKEN
+# spring.cloud.vault.token=hvs.EXAMPLE_TOKEN_PLACEHOLDER
 
 # INSTEAD, USE ENVIRONMENT VARIABLE:
 spring.cloud.vault.token=${VAULT_TOKEN:hvs.DEV_TOKEN_PLACEHOLDER}

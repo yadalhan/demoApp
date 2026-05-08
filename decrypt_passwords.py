@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Password Decryption Script for demoApp
-Decrypts AES encrypted passwords stored in ebiz.board table
+Decrypts AES-GCM encrypted passwords stored in ebiz.board table
 """
 
 import base64
@@ -11,7 +11,6 @@ import sys
 import psycopg2
 import hvac
 from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
 
 DB_CONFIG = {
     "host": "192.168.2.57",
@@ -26,6 +25,11 @@ VAULT_CONFIG = {
     "url": "http://192.168.2.57:8200",
     "token": os.environ.get("VAULT_TOKEN", "hvs.YOUR_TOKEN_HERE"),
 }
+
+# GCM parameters (must match VaultCryptoService.java)
+GCM_IV_LENGTH_BYTES = 12  # 96 bits recommended for GCM
+GCM_TAG_LENGTH_BITS = 128  # 128-bit tag
+GCM_TAG_LENGTH_BYTES = GCM_TAG_LENGTH_BITS // 8  # 16 bytes
 
 
 def get_vault_key():
@@ -54,14 +58,29 @@ def get_vault_key():
 
 def decrypt_password(encrypted_password, encryption_key):
     try:
-        encrypted_bytes = base64.b64decode(encrypted_password)
-
-        cipher = AES.new(encryption_key, AES.MODE_ECB)
-        decrypted = cipher.decrypt(encrypted_bytes)
-
-        unpadded = unpad(decrypted, AES.block_size)
-
-        return unpadded.decode('utf-8')
+        # Decode base64 URL-safe
+        combined = base64.urlsafe_b64decode(encrypted_password)
+        
+        # Extract IV (first 12 bytes)
+        if len(combined) < GCM_IV_LENGTH_BYTES:
+            return "[DECRYPTION ERROR: Encrypted text too short]"
+            
+        iv = combined[:GCM_IV_LENGTH_BYTES]
+        
+        # Extract tag (last 16 bytes)
+        if len(combined) < GCM_IV_LENGTH_BYTES + GCM_TAG_LENGTH_BYTES:
+            return "[DECRYPTION ERROR: Encrypted text too short for tag]"
+            
+        tag = combined[-GCM_TAG_LENGTH_BYTES:]
+        
+        # Extract ciphertext (everything in between)
+        ciphertext = combined[GCM_IV_LENGTH_BYTES:-GCM_TAG_LENGTH_BYTES]
+        
+        # Decrypt using AES-GCM
+        cipher = AES.new(encryption_key, AES.MODE_GCM, nonce=iv)
+        decrypted = cipher.decrypt_and_verify(ciphertext, tag)
+        
+        return decrypted.decode('utf-8')
 
     except Exception as e:
         return f"[DECRYPTION ERROR: {str(e)}]"

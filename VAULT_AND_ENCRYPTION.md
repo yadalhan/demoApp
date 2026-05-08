@@ -93,12 +93,13 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 
 1. **Spring Vault** (`VaultOperations`) reads from `ebiz_service/data/ebiz_db/data-enc-key`
 2. The Fernet key is Base64URL decoded (32 bytes total)
-3. `PasswordService` uses the full 32-byte key for AES-256 encryption/decryption (ECB mode)
+3. `PasswordService` uses the full 32-byte key for AES-256 encryption/decryption (GCM mode)
 4. Vault connection details in `application.properties`:
    ```properties
-   spring.cloud.vault.uri=http://192.168.2.57:8200
-   spring.cloud.vault.token=VAULT_TOKEN_PLACE_HOLDER
+   spring.cloud.vault.uri=${VAULT_URI:http://192.168.2.57:8200}
+   spring.cloud.vault.token=${VAULT_TOKEN:hvs.DEV_TOKEN_PLACEHOLDER}
    spring.cloud.vault.fail-fast=false
+   vault.secret.path=${VAULT_SECRET_PATH:ebiz_service/data/ebiz_db/data-enc-key}
    ```
 
 ## Password Encryption
@@ -107,10 +108,10 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 demoApp uses the `vault-crypto` package for encryption:
 
 - **Package**: `com.xaan:vault-crypto:0.0.1-SNAPSHOT` (separate JAR)
-- **Algorithm**: AES-256 (ECB mode, PKCS5 padding)
+- **Algorithm**: AES-256 (GCM mode)
 - **Key Source**: Vault kv-v2 (`ebiz_service/data/ebiz_db/data-enc-key`, field: `fernet-key`)
 - **Key Format**: Fernet key (32 bytes, used directly as AES-256 key)
-- **Output**: Base64 encoded string (e.g., `pU4nAaBrwqPKLoV1Waa/tw==`)
+- **Output**: Base64 URL-safe encoded string containing IV + ciphertext
 
 **Usage in demoApp:**
 ```java
@@ -119,8 +120,9 @@ demoApp uses the `vault-crypto` package for encryption:
 public class PasswordService {
     private final VaultCryptoService vaultCryptoService;
 
-    public PasswordService(VaultOperations vaultOperations) {
-        this.vaultCryptoService = new VaultCryptoService(vaultOperations);
+    public PasswordService(VaultOperations vaultOperations,
+                           @Value("${vault.secret.path:ebiz_service/data/ebiz_db/data-enc-key}") String vaultSecretPath) {
+        this.vaultCryptoService = new VaultCryptoService(vaultOperations, vaultSecretPath);
     }
 
     public String encryptPassword(String password) {
@@ -184,11 +186,14 @@ python3 decrypt_passwords.py
 
 ## Security Notes
 
-1. **Vault Token**: Stored in `application.properties` (which is in `.gitignore`)
-2. **Fernet Key**: 32 bytes used as AES-256 key (ECB mode)
+1. **Vault Token**: Configured via environment variable `${VAULT_TOKEN}` with fallback for development
+2. **Fernet Key**: 32 bytes used as AES-256 key (GCM mode with random IV)
 3. **Base64URL**: Fernet key uses URL-safe Base64 (`-` and `_` instead of `+` and `/`)
 4. **Fail-Fast**: `false` (app starts even if Vault is unavailable, but encryption will fail)
-5. **ECB Mode**: No IV used - simpler but less secure than CBC mode
+5. **GCM Mode**: Uses random IV for each encryption, providing authenticated encryption
+6. **Constant-Time Validation**: Password validation uses `MessageDigest.isEqual()` to prevent timing attacks
+7. **Configurable Vault Path**: Vault secret path can be configured via `${VAULT_SECRET_PATH}` property
+8. **Custom Exceptions**: Uses `KeyLoadingException` for Vault key loading errors
 
 ## Password Decryption (Testing)
 
