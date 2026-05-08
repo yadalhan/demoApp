@@ -90,7 +90,7 @@ spring.cloud.vault.fail-fast=false
 - **Server**: 192.168.2.57:8200
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.1-SNAPSHOT`) provides encryption
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.1`) provides encryption
 2. `PasswordService` delegates to `VaultCryptoService` for encrypt/decrypt
 3. Vault key is read at startup and used for AES-256 (ECB mode)
 4. Passwords stored as Base64-encoded encrypted strings in DB
@@ -167,7 +167,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.3-SNAPSHOT.jar
+   java -jar build/libs/xaandemo-0.0.3.jar
    ```
 
 3. **Access the application:**
@@ -222,7 +222,7 @@ CREATE TABLE ebiz.board (
 1. **Password Encryption**: AES-256 encryption via `vault-crypto` package
    - Implementation: `PasswordService.java` uses `VaultCryptoService`
    - Encryption key from Vault kv-v2 (32-byte Fernet key as AES-256 key)
-   - Package: `com.xaan:vault-crypto:0.0.1-SNAPSHOT`
+    - Package: `com.xaan:vault-crypto:0.0.1`
    - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
    - Python decryption script available for testing (`decrypt_passwords.py`)
    - ✅ **Production tested** (2026-05-08): Encryption/decryption verified
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.3-SNAPSHOT.jar app.jar
+COPY build/libs/xaandemo-0.0.3.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `./gradlew clean build`
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.3-SNAPSHOT.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.3-SNAPSHOT.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.3.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.3.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -285,7 +285,64 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ./gradlew test --tests "*DemoApplicationTests"
 ```
 
-## License
+## Release History
+
+### v0.0.3 (2026-05-08)
+
+**Security & Refactoring Release** - Password encryption service refactored to use `vault-crypto` package.
+
+**Security Improvements:**
+- Password encryption implemented using `vault-crypto` package (AES-256 ECB, PKCS5 padding)
+- Encryption key loaded from HashiCorp Vault kv-v2 backend at startup
+- Old plain-text passwords migrated to encrypted format
+- Python decryption script (`decrypt_passwords.py`) for verification
+- ✅ Production tested (2026-05-08) with post ID 2017588
+
+**Architecture:**
+- `PasswordService.java` refactored to delegate to `VaultCryptoService`
+- `vault-crypto:0.0.1` dependency introduced
+- `PasswordService` now uses `@Service` annotation with `@Autowired VaultOperations`
+- Vault connection configured with fail-fast disabled
+
+**Bug Fixes:**
+- Fixed Vault kv-v2 integration with proper Fernet key field (`fernet-key`)
+- Fixed Vault key name: `fernet-key` instead of `data-enc-key`
+
+**Documentation:**
+- `VAULT_AND_ENCRYPTION.md` - Full implementation details
+- `VAULT_INTEGRATION_DIAGRAM.md` - System architecture diagram
+- Python decryption script for password verification
+
+### v0.0.2 (2026-05-06)
+
+**Vault Integration Release** - Initial integration with HashiCorp Vault for secrets management.
+
+**Features:**
+- Spring Cloud Vault integration
+- Vault kv-v2 backend configuration
+- Fail-fast disabled for graceful degradation
+
+**Bug Fixes:**
+- Fixed Vault URI and token configuration in `application.properties`
+- Fixed password encryption in `BoardService.java` (injected PasswordService)
+- Migrated old plain-text passwords to encrypted format
+
+**Deployment:**
+- Deploy script (`deploy.sh`) for production server
+- Production URL: http://192.168.2.57:8080
+
+### v0.0.1 (2026-05-06)
+
+**Initial release** - Spring Boot demo application with board/article management.
+
+**Features:**
+- Spring Boot 3.4.0 with Java 17
+- PostgreSQL database integration (schema: `ebiz.board`)
+- JPA with Hibernate for data persistence
+- Thymeleaf templating engine
+- REST API (`/api/v1/posts`) and web pages
+- Gradle build system with wrapper
+- Pagination support for board listings
 
 This project is available for use under the MIT License.
 

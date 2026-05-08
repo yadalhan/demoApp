@@ -5,10 +5,10 @@ plugins {
 }
 
 group = 'com.xaan'
-version = '0.0.3-SNAPSHOT'
+version = '0.0.3'
 
 jar.archiveBaseName = 'xaandemo'
-jar.archiveVersion = '0.0.3-SNAPSHOT'
+jar.archiveVersion = '0.0.3'
 
 java {
     toolchain {
@@ -58,5 +58,5 @@ tasks.named('test') {
 
 bootJar {
     archiveBaseName = 'xaandemo'
-    archiveVersion = '0.0.3-SNAPSHOT'
+    archiveVersion = '0.0.3'
 }
