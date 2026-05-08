@@ -72,18 +72,46 @@ spring.datasource.username=${DB_USERNAME:postgres}
 spring.datasource.password=${DB_PASSWORD:changeme}
 ```
 
-### Vault Configuration (Updated 2026-05-06)
+### Vault Configuration (Updated 2026-05-07)
+
+The application now uses **HashiCorp Vault kv-v2** (versioned key-value) backend:
+
 ```properties
-spring.cloud.vault.uri=${VAULT_URI:http://localhost:8200}
-spring.cloud.vault.token=${VAULT_TOKEN:hvs.CHECK_VAULT_FOR_TOKEN}
-spring.cloud.vault.generic.enabled=true
-spring.cloud.vault.generic.backend=secret
-spring.cloud.vault.generic.application-name=demoApp
+# Vault Configuration (connection only)
+spring.cloud.vault.uri=http://192.168.2.57:8200
+spring.cloud.vault.token=${VAULT_TOKEN}
 spring.cloud.vault.fail-fast=false
 ```
 
-> **Note**: Vault secret path `secret/demoApp` needs to be configured in Vault for full integration. 
-> See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details.
+### Vault kv-v2 Integration
+- **Mount**: `ebiz_service` (kv-v2)
+- **Secret Path**: `ebiz_db/data-enc-key`
+- **Key**: `fernet-key` (32 bytes, used as AES-256 key)
+- **Server**: 192.168.2.57:8200
+
+### How It Works
+1. **PasswordService** uses `VaultOperations.read()` to read Fernet key
+2. The Fernet key is URL-safe Base64 decoded (32 bytes total)
+3. Full 32-byte key used for AES-256 encryption/decryption (ECB mode)
+4. Passwords stored as Base64-encoded encrypted strings in DB
+5. Python decryption script available for verification (`decrypt_passwords.py`)
+
+### Setting up Vault Secrets
+```bash
+# Enable kv-v2 backend (if not already enabled)
+vault secrets enable -path=ebiz_service kv-v2
+
+# Store the Fernet encryption key
+vault kv put -mount=ebiz_service ebiz_db/data-enc-key \
+  fernet-key="NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y=" \
+  description="encryption key for ebiz db column"
+
+# Verify the secret
+vault kv get -mount=ebiz_service ebiz_db/data-enc-key
+```
+
+> **Note**: Vault secret path `ebiz_service/data/ebiz_db/data-enc-key` needs to be configured. 
+> See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
 
 ## Building the Project
 
@@ -178,15 +206,19 @@ CREATE TABLE ebiz.board (
 );
 ```
 
-> **Password Storage**: Passwords are encrypted using AES encryption. 
+> **Password Storage**: Passwords are encrypted using AES-256 (ECB mode) with Vault-sourced key.
 > See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
+> Python decryption script (`decrypt_passwords.py`) available for verification.
 
 ## Security Features
 
-1. **Password Encryption**: AES encryption with Base64 encoding for passwords (auto-applied on save/update)
-   - Implementation: `PasswordService.java` 
-   - Encryption key managed in `PasswordService` (consider moving to Vault for production)
+1. **Password Encryption**: AES-256 encryption with Base64 encoding for passwords (auto-applied on save/update)
+   - Implementation: `PasswordService.java`
+   - Encryption key from Vault kv-v2 (32-byte Fernet key as AES-256 key)
    - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
+   - Python decryption script available for testing (`decrypt_passwords.py`)
+
+2. **Vault Integration**: External secrets management with Spring Cloud Vault
 2. **Vault Integration**: External secrets management with Spring Cloud Vault
    - Configured to connect to Vault server at `http://192.168.2.57:8200`
    - Fail-fast disabled to allow startup without Vault

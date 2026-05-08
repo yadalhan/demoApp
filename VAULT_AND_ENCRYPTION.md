@@ -3,7 +3,7 @@
 ## Overview
 This document describes the Vault server configuration and password encryption implementation for the demoApp project.
 
-## Vault Configuration (Updated 2026-05-07)
+## Vault Configuration (Updated 2026-05-08)
 
 ### kv-v2 Backend Configuration
 The application now uses HashiCorp Vault kv-v2 (versioned key-value) backend:
@@ -11,7 +11,7 @@ The application now uses HashiCorp Vault kv-v2 (versioned key-value) backend:
 **Vault Path**: `ebiz_service/data/ebiz_db/data-enc-key`
 - **Mount**: `ebiz_service` (kv-v2)
 - **Secret Path**: `ebiz_db/data-enc-key`
-- **Key**: `fernet-key` (32 bytes: 16 for AES-128 + 16 for HMAC-SHA256)
+- **Key**: `fernet-key` (32 bytes, used as AES-256 key)
 - **Server**: 192.168.2.57:8200
 
 ### Setting up Vault Secrets
@@ -33,11 +33,11 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 
 1. **Spring Vault** (`VaultOperations`) reads from `ebiz_service/data/ebiz_db/data-enc-key`
 2. The Fernet key is Base64URL decoded (32 bytes total)
-3. `PasswordService` uses the decoded key for AES-128 encryption/decryption
+3. `PasswordService` uses the full 32-byte key for AES-256 encryption/decryption (ECB mode)
 4. Vault connection details in `application.properties`:
    ```properties
    spring.cloud.vault.uri=http://192.168.2.57:8200
-   spring.cloud.vault.token=VAULT_TOKEN_PLACEHOLDER
+   spring.cloud.vault.token=VAULT_TOKEN_PLACE_HOLDER
    spring.cloud.vault.fail-fast=false
    ```
 
@@ -46,9 +46,9 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 ### Implementation
 `PasswordService.java` uses Vault-sourced Fernet key for AES encryption:
 
-- **Algorithm**: AES-128 (CBC mode)
+- **Algorithm**: AES-256 (ECB mode, PKCS5 padding)
 - **Key Source**: Vault kv-v2 (`ebiz_service/data/ebiz_db/data-enc-key`, field: `fernet-key`)
-- **Key Format**: Fernet key (32 bytes: 16 for AES + 16 for HMAC-SHA256)
+- **Key Format**: Fernet key (32 bytes, used directly as AES-256 key)
 - **Output**: Base64 encoded string (e.g., `pU4nAaBrwqPKLoV1Waa/tw==`)
 
 **Key Implementation:**
@@ -56,7 +56,7 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 @Service
 public class PasswordService {
     private byte[] encryptionKey;
-    
+
     public PasswordService(VaultOperations vaultOperations) {
         // Load Fernet key from Vault kv-v2
         VaultResponse response = vaultOperations.read("ebiz_service/data/ebiz_db/data-enc-key");
@@ -65,12 +65,21 @@ public class PasswordService {
         String fernetKeyBase64 = (String) secretData.get("fernet-key");
         this.encryptionKey = Base64.getUrlDecoder().decode(fernetKeyBase64);
     }
-    
+
     public String encryptPassword(String password) {
         SecretKeySpec secretKey = new SecretKeySpec(encryptionKey, "AES");
         Cipher cipher = Cipher.getInstance("AES");
         cipher.init(Cipher.ENCRYPT_MODE, secretKey);
         return Base64.getEncoder().encodeToString(cipher.doFinal(password.getBytes()));
+    }
+
+    public String decryptPassword(String encryptedPassword) {
+        SecretKeySpec secretKey = new SecretKeySpec(encryptionKey, "AES");
+        Cipher cipher = Cipher.getInstance("AES");
+        cipher.init(Cipher.DECRYPT_MODE, secretKey);
+        byte[] encryptedBytes = Base64.getDecoder().decode(encryptedPassword);
+        byte[] decryptedBytes = cipher.doFinal(encryptedBytes);
+        return new String(decryptedBytes);
     }
 }
 ```
@@ -84,22 +93,48 @@ SELECT id, title, password FROM ebiz.board WHERE id = 2017587;
 
 ## Deployment
 
-### Verified Working (2026-05-07))
+### Verified Working (2026-05-08)
 - ✅ Vault kv-v2 integration working
 - ✅ Fernet key loaded from `ebiz_service/data/ebiz_db/data-enc-key`
-- ✅ Password encryption successful (test post ID: 2017587)
+- ✅ Password encryption/decryption successful (test post ID: 2017587)
 - ✅ Application startup successful with Vault integration
+- ✅ Python decryption script tested and verified (`decrypt_passwords.py`)
 
 ## Security Notes
 
 1. **Vault Token**: Stored in `application.properties` (which is in `.gitignore`)
-2. **Fernet Key**: 32 bytes total (16 for AES-128 + 16 for HMAC-SHA256)
+2. **Fernet Key**: 32 bytes used as AES-256 key (ECB mode)
 3. **Base64URL**: Fernet key uses URL-safe Base64 (`-` and `_` instead of `+` and `/`)
 4. **Fail-Fast**: `false` (app starts even if Vault is unavailable, but encryption will fail)
+5. **ECB Mode**: No IV used - simpler but less secure than CBC mode
+
+## Password Decryption (Testing)
+
+### Python Decryption Script
+A Python script (`decrypt_passwords.py`) is provided for verifying encrypted passwords:
+
+**Requirements:**
+```bash
+pip install pycryptodome psycopg2-binary hvac
+```
+
+**Usage:**
+```bash
+python3 decrypt_passwords.py
+```
+
+**What it does:**
+1. Connects to Vault (kv-v2) to retrieve the Fernet key
+2. Connects to PostgreSQL database
+3. Decrypts all encrypted passwords in `ebiz.board` table
+4. Displays ID, title, encrypted password, and decrypted plaintext
+
+**Verified Working:** Tested on 2026-05-08 with hvac library
 
 ## Files Modified
 1. `src/main/java/com/xaan/demo/service/PasswordService.java` - Vault-based encryption key loading
 2. `src/main/resources/application.properties` - Vault connection settings
+3. `decrypt_passwords.py` - Python script for password verification (added 2026-05-08)
 
-## Date: 2026-05-07
-## Status: Vault kv-v2 Fernet key integration complete
+## Date: 2026-05-08
+## Status: Vault kv-v2 Fernet key integration complete, decryption script verified
