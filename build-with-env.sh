@@ -2,7 +2,7 @@
 
 # Set environment variables
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-export PATH=/opt/gradle/gradle-8.7/bin:$PATH
+export PATH=/opt/gradle/gradle-8.14.5/bin:$PATH
 
 echo "Java version:"
 $JAVA_HOME/bin/java -version
