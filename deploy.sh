@@ -7,7 +7,7 @@ PROD_SERVER="192.168.2.57"
 PROD_USER="xaan"
 PROD_APP_DIR="/home/xaan/ws/demoBBS/app"
 PROD_BASE_DIR="/home/xaan/ws/demoBBS"
-JAR_FILE="build/libs/xaandemo-0.0.3-SNAPSHOT.jar"
+JAR_FILE="build/libs/xaandemo-0.0.3.jar"
 STOP_SCRIPT="${PROD_BASE_DIR}/stopapp.sh"
 START_SCRIPT="${PROD_BASE_DIR}/startapp.sh"
 LOG_DIR="${PROD_BASE_DIR}/log"
@@ -25,7 +25,7 @@ echo -e "\n${YELLOW}[Step 0/4] Building application...${NC}"
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 
-if ! ./gradlew clean build -x test; then
+if ! gradle clean build -x test; then
     echo -e "${RED}Build failed! Aborting deployment.${NC}"
     exit 1
 fi
@@ -61,6 +61,10 @@ while pgrep -f "xaandemo-0.0.3-SNAPSHOT.jar" > /dev/null 2>&1; do
     sleep 1
 done
 echo "Process is down. Starting application..."
+# Copy new JAR to production jar name if different
+if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.3.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then
+    cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.3.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar
+fi
 bash /home/xaan/ws/demoBBS/startapp.sh
 echo "Start script executed."
 EOF
