@@ -23,25 +23,24 @@ public class BoardService {
     private final BoardRepository boardRepository;
     private final PasswordService passwordService;
 
-    // 1. save
+    // 1. save - 게시글 비밀번호는 AES-GCM으로 암호화
     @Transactional
     public Long save(BoardSaveRequestDto requestDto) {
         Board board = requestDto.toEntity();
         if (board.getPassword() != null && !board.getPassword().isEmpty()) {
-            board.updatePassword(passwordService.encryptPassword(board.getPassword()));
+            board.updatePassword(passwordService.encryptBoardPassword(board.getPassword()));
         }
         return boardRepository.save(board).getId();
     }
 
-    // 2. update
+    // 2. update - 게시글 비밀번호는 AES-GCM으로 암호화
     @Transactional
     public Long update(Long id, BoardUpdateRequestDto requestDto) {
         Board board = boardRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("no ariticle for id=" + id));
-        // Dirty Checking: if colum is updated in this transaction, execute update query automatically
         board.update(requestDto.getTitle(), requestDto.getContent());
         if (requestDto.getPassword() != null && !requestDto.getPassword().isEmpty()) {
-            board.updatePassword(passwordService.encryptPassword(requestDto.getPassword()));
+            board.updatePassword(passwordService.encryptBoardPassword(requestDto.getPassword()));
         }
         return id;
     }
@@ -63,16 +62,15 @@ public class BoardService {
     @Transactional(readOnly = true)
     public Page<BoardResponseDto> getBoardList(Pageable pageable) {
             Pageable pageRequest = PageRequest.of(0, 10, Sort.by("id").descending());
-            Page<Board> boardPage = boardRepository.findAllByOrderByIdDesc(pageRequest);
+            Page<Board> boardPage = boardRepository.findAll(pageRequest);
             return boardPage.map(BoardResponseDto::new);
     }
 
     @Transactional(readOnly = true)
     public Slice<BoardResponseDto> getBoardList1stOnly(Pageable pageable) {
-            // 0페이지, 10개씩, ID 내림차순
             Pageable pageRequest = PageRequest.of(0, 10, Sort.by("id").descending());
-            Slice<Board> boardPage = boardRepository.findByOrderByIdDesc(pageRequest);
-            return boardPage.map(BoardResponseDto::new);
+            Slice<Board> boardSlice = boardRepository.findByOrderByIdDesc(pageRequest);
+            return boardSlice.map(BoardResponseDto::new);
     }
 
     @Transactional(readOnly = true)
@@ -80,5 +78,12 @@ public class BoardService {
         return boardRepository.findTop100ByOrderByIdDesc().stream()
                 .map(BoardResponseDto::new)
                 .collect(Collectors.toList());
+    }
+
+    // 게시글 비밀번호 검증
+    public boolean verifyPassword(Long id, String password) {
+        Board board = boardRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("no ariticle for id=" + id));
+        return passwordService.validateBoardPassword(password, board.getPassword());
     }
 }

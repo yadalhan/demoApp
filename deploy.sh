@@ -7,7 +7,7 @@ PROD_SERVER="192.168.2.57"
 PROD_USER="xaan"
 PROD_APP_DIR="/home/xaan/ws/demoBBS/app"
 PROD_BASE_DIR="/home/xaan/ws/demoBBS"
-JAR_FILE="build/libs/xaandemo-0.0.3.jar"
+JAR_FILE="build/libs/xaandemo-0.0.4.jar"
 STOP_SCRIPT="${PROD_BASE_DIR}/stopapp.sh"
 START_SCRIPT="${PROD_BASE_DIR}/startapp.sh"
 LOG_DIR="${PROD_BASE_DIR}/log"
@@ -56,14 +56,14 @@ fi
 echo -e "\n${YELLOW}[Step 3/4] Waiting for process to stop and starting...${NC}"
 
 ssh "${PROD_USER}@${PROD_SERVER}" bash << 'EOF'
-while pgrep -f "xaandemo-0.0.3-SNAPSHOT.jar" > /dev/null 2>&1; do
+while pgrep -f "xaandemo-0.0.4-SNAPSHOT.jar" > /dev/null 2>&1; do
     echo "Process still running, waiting 1 second..."
     sleep 1
 done
 echo "Process is down. Starting application..."
 # Copy new JAR to production jar name if different
-if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.3.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then
-    cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.3.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar
+if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.4.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then
+    cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.4.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar
 fi
 bash /home/xaan/ws/demoBBS/startapp.sh
 echo "Start script executed."

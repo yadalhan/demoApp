@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-Password Decryption Script for demoApp
-Decrypts AES-GCM encrypted passwords stored in ebiz.board table
+Password Verification Script for demoApp (BCrypt)
+Verifies BCrypt-hashed passwords stored in the ebiz.board and ebiz.users tables.
+Also checks for old AES-GCM encrypted passwords that need migration.
 """
 
-import base64
 import os
 import sys
+import base64
 
-import psycopg2
-import hvac
-from Crypto.Cipher import AES
+import bcrypt
+
+# Add my_env site-packages to path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'my_env', 'lib', 'python3.12', 'site-packages'))
 
 DB_CONFIG = {
     "host": "192.168.2.57",
@@ -21,140 +23,228 @@ DB_CONFIG = {
     "options": "-c search_path=ebiz"
 }
 
-VAULT_CONFIG = {
-    "url": "http://192.168.2.57:8200",
-    "token": os.environ.get("VAULT_TOKEN", "hvs.YOUR_TOKEN_HERE"),
-}
-
-# GCM parameters (must match VaultCryptoService.java)
-GCM_IV_LENGTH_BYTES = 12  # 96 bits recommended for GCM
-GCM_TAG_LENGTH_BITS = 128  # 128-bit tag
-GCM_TAG_LENGTH_BYTES = GCM_TAG_LENGTH_BITS // 8  # 16 bytes
+# Old AES-GCM parameters (for detecting legacy encrypted passwords)
+GCM_IV_LENGTH_BYTES = 12
+GCM_TAG_LENGTH_BYTES = 16
 
 
-def get_vault_key():
-    client = hvac.Client(url=VAULT_CONFIG['url'], token=VAULT_CONFIG['token'])
-
+def is_bcrypt_hash(password):
+    """Check if a password string is a valid BCrypt hash."""
     try:
-        response = client.secrets.kv.v2.read_secret_version(
-            path='ebiz_db/data-enc-key',
-            mount_point='ebiz_service'
-        )
+        if isinstance(password, str):
+            password = password.encode('utf-8')
+        # BCrypt hashes start with $2a$, $2b$, or $2y$ and are 60 chars
+        return password.startswith(b'$2a$') or password.startswith(b'$2b$') or password.startswith(b'$2y$')
+    except Exception:
+        return False
 
-        secret_data = response['data']['data']
-        fernet_key_base64 = secret_data['fernet-key']
 
-        encryption_key = base64.urlsafe_b64decode(fernet_key_base64)
-
-        print(f"✓ Retrieved encryption key from Vault")
-        print(f"  Key length: {len(encryption_key)} bytes")
-
-        return encryption_key
-
+def verify_password(plain_password, hashed_password):
+    """
+    Verify a plain-text password against a BCrypt hash.
+    Returns True if the password matches, False otherwise.
+    """
+    try:
+        plain_bytes = plain_password.encode('utf-8')
+        hash_bytes = hashed_password.encode('utf-8') if isinstance(hashed_password, str) else hashed_password
+        return bcrypt.checkpw(plain_bytes, hash_bytes)
     except Exception as e:
-        print(f"✗ Failed to connect to Vault: {e}", file=sys.stderr)
+        print(f"[ERROR] Verification failed: {e}", file=sys.stderr)
+        return False
+
+
+def is_old_aes_gcm_encrypted(password):
+    """Check if password appears to be old AES-GCM encrypted (base64url encoded)."""
+    try:
+        if not isinstance(password, str):
+            return False
+        decoded = base64.urlsafe_b64decode(password)
+        # AES-GCM encrypted data: 12 bytes IV + ciphertext + 16 bytes tag
+        # Minimum length would be 12 + 1 + 16 = 29 bytes for a very short password
+        return len(decoded) >= 29
+    except Exception:
+        return False
+
+
+def get_connection():
+    """Establish a database connection using psycopg2."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(
+            host=DB_CONFIG["host"],
+            port=DB_CONFIG["port"],
+            database=DB_CONFIG["database"],
+            user=DB_CONFIG["user"],
+            password=DB_CONFIG["password"],
+            options=DB_CONFIG["options"]
+        )
+        print(f"✓ Connected to database {DB_CONFIG['database']} at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+        return conn
+    except ImportError:
+        print("[ERROR] psycopg2 is not installed.", file=sys.stderr)
+        print("Install with: pip install psycopg2-binary", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"[ERROR] Database connection failed: {e}", file=sys.stderr)
         sys.exit(1)
 
 
-def decrypt_password(encrypted_password, encryption_key):
-    try:
-        # Decode base64 URL-safe
-        combined = base64.urlsafe_b64decode(encrypted_password)
-        
-        # Extract IV (first 12 bytes)
-        if len(combined) < GCM_IV_LENGTH_BYTES:
-            return "[DECRYPTION ERROR: Encrypted text too short]"
-            
-        iv = combined[:GCM_IV_LENGTH_BYTES]
-        
-        # Extract tag (last 16 bytes)
-        if len(combined) < GCM_IV_LENGTH_BYTES + GCM_TAG_LENGTH_BYTES:
-            return "[DECRYPTION ERROR: Encrypted text too short for tag]"
-            
-        tag = combined[-GCM_TAG_LENGTH_BYTES:]
-        
-        # Extract ciphertext (everything in between)
-        ciphertext = combined[GCM_IV_LENGTH_BYTES:-GCM_TAG_LENGTH_BYTES]
-        
-        # Decrypt using AES-GCM
-        cipher = AES.new(encryption_key, AES.MODE_GCM, nonce=iv)
-        decrypted = cipher.decrypt_and_verify(ciphertext, tag)
-        
-        return decrypted.decode('utf-8')
+def check_board_passwords(conn):
+    """Check all board entries with passwords and classify them."""
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id, password FROM board WHERE password IS NOT NULL AND password != '' ORDER BY id")
+    rows = cursor.fetchall()
+    
+    print(f"\nFound {len(rows)} board entries with passwords")
+    print("=" * 70)
+    
+    bcrypt_count = 0
+    aes_gcm_count = 0
+    unknown_count = 0
+    
+    for board_id, password in rows:
+        if is_bcrypt_hash(password):
+            bcrypt_count += 1
+            status = "✓ BCrypt hash"
+        elif is_old_aes_gcm_encrypted(password):
+            aes_gcm_count += 1
+            status = "⚠ AES-GCM encrypted (needs migration)"
+        else:
+            unknown_count += 1
+            status = "? Unknown format"
+        print(f"  Board ID {board_id}: {status}")
+    
+    cursor.close()
+    
+    print(f"\nSummary:")
+    print(f"  BCrypt hashes:       {bcrypt_count}")
+    print(f"  AES-GCM encrypted:   {aes_gcm_count}")
+    print(f"  Unknown format:      {unknown_count}")
+    
+    return {"bcrypt": bcrypt_count, "aes_gcm": aes_gcm_count, "unknown": unknown_count}
 
-    except Exception as e:
-        return f"[DECRYPTION ERROR: {str(e)}]"
+
+def check_user_passwords(conn):
+    """Check all user entries and classify their password format."""
+    cursor = conn.cursor()
+    
+    # Use correct column name: user_id (not userid)
+    cursor.execute("SELECT id, user_id, password, username FROM users WHERE password IS NOT NULL ORDER BY id")
+    rows = cursor.fetchall()
+    
+    print(f"\nFound {len(rows)} user entries with passwords")
+    print("=" * 70)
+    
+    bcrypt_count = 0
+    aes_gcm_count = 0
+    unknown_count = 0
+    
+    for user_id, user_id_val, password, username in rows:
+        if is_bcrypt_hash(password):
+            bcrypt_count += 1
+            status = "✓ BCrypt hash"
+        elif is_old_aes_gcm_encrypted(password):
+            aes_gcm_count += 1
+            status = "⚠ AES-GCM encrypted (needs migration)"
+        else:
+            unknown_count += 1
+            status = "? Unknown format"
+        print(f"  User '{user_id_val}' ({username}): {status}")
+    
+    cursor.close()
+    
+    print(f"\nSummary:")
+    print(f"  BCrypt hashes:       {bcrypt_count}")
+    print(f"  AES-GCM encrypted:   {aes_gcm_count}")
+    print(f"  Unknown format:      {unknown_count}")
+    
+    return {"bcrypt": bcrypt_count, "aes_gcm": aes_gcm_count, "unknown": unknown_count}
+
+
+def test_bcrypt_functionality():
+    """Test that BCrypt is working correctly locally."""
+    print("\n--- Local BCrypt Functionality Test ---")
+    
+    # Test 1: Basic hash and verify
+    test_password = "mySecurePassword123"
+    hashed = bcrypt.hashpw(test_password.encode('utf-8'), bcrypt.gensalt(rounds=10))
+    assert bcrypt.checkpw(test_password.encode('utf-8'), hashed), "Hash/verify roundtrip failed"
+    print("✓ Test 1: Basic hash and verify - PASSED")
+    
+    # Test 2: Wrong password should fail
+    wrong_password = "wrongPassword"
+    result = bcrypt.checkpw(wrong_password.encode('utf-8'), hashed)
+    assert result == False, "Wrong password should not match"
+    print("✓ Test 2: Wrong password rejected - PASSED")
+    
+    # Test 3: Hash is salted (same password produces different hashes)
+    hash1 = bcrypt.hashpw("samePassword".encode('utf-8'), bcrypt.gensalt(rounds=10))
+    hash2 = bcrypt.hashpw("samePassword".encode('utf-8'), bcrypt.gensalt(rounds=10))
+    assert hash1 != hash2, "Salts should produce different hashes"
+    assert bcrypt.checkpw("samePassword".encode('utf-8'), hash1), "First hash should still verify"
+    assert bcrypt.checkpw("samePassword".encode('utf-8'), hash2), "Second hash should still verify"
+    print("✓ Test 3: Salted hashes - PASSED")
+    
+    # Test 4: One-way (cannot decrypt)
+    assert not hasattr(bcrypt, 'decrypt'), "BCrypt should not have decrypt"
+    print("✓ Test 4: One-way hash (no decrypt) - PASSED")
+    
+    # Test 5: is_bcrypt_hash detection
+    assert is_bcrypt_hash(hashed.decode('utf-8')), "Should detect BCrypt hash"
+    assert not is_bcrypt_hash("notAHash"), "Should reject non-BCrypt strings"
+    print("✓ Test 5: BCrypt hash detection - PASSED")
+    
+    print("✓ All local BCrypt tests passed!")
 
 
 def main():
     print("=" * 70)
-    print("Password Decryption Script - demoApp")
+    print("demoApp Password Verification Script (BCrypt)")
     print("=" * 70)
-    print()
-
-    print("[1/2] Connecting to Vault...")
-    encryption_key = get_vault_key()
-    print()
-
-    print("[2/2] Connecting to PostgreSQL database...")
+    
+    # Run local functionality tests first
+    test_bcrypt_functionality()
+    
+    # Connect to database
+    conn = get_connection()
+    
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cursor = conn.cursor()
-        print(f"✓ Connected to {DB_CONFIG['database']} database")
-        print()
-    except psycopg2.Error as e:
-        print(f"✗ Database connection failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-    print("Retrieving and decrypting passwords...")
-    print()
-    print("-" * 70)
-    print(f"{'ID':<12} {'Title':<30} {'Encrypted':<25} {'Decrypted'}")
-    print("-" * 70)
-
-    try:
-        cursor.execute("""
-            SELECT id, title, password
-            FROM ebiz.board
-            WHERE password IS NOT NULL
-            ORDER BY id
-            fetch next 10 rows only
-        """)
-
-        row_count = 0
-        for row in cursor.fetchall():
-            row_count += 1
-            post_id, title, encrypted_password = row
-
-            if encrypted_password:
-                decrypted = decrypt_password(encrypted_password, encryption_key)
-            else:
-                decrypted = "[NULL]"
-
-            display_title = title[:28] + ".." if len(title) > 30 else title
-            display_enc = encrypted_password[:20] + ".." if len(encrypted_password) > 22 else encrypted_password
-
-            print(f"{post_id:<12} {display_title:<30} {display_enc:<25} {decrypted}")
-
-        print("-" * 70)
-        print(f"\nTotal records processed: {row_count}")
-
-    except psycopg2.Error as e:
-        print(f"✗ Query failed: {e}", file=sys.stderr)
-        sys.exit(1)
+        # Check board passwords
+        board_results = check_board_passwords(conn)
+        
+        # Check user passwords
+        user_results = check_user_passwords(conn)
+        
+        # Summary
+        print("\n" + "=" * 70)
+        print("FINAL REPORT")
+        print("=" * 70)
+        
+        total_bcrypt = board_results["bcrypt"] + user_results["bcrypt"]
+        total_aes = board_results["aes_gcm"] + user_results["aes_gcm"]
+        total_unknown = board_results["unknown"] + user_results["unknown"]
+        
+        print(f"BCrypt hashes (ready):     {total_bcrypt}")
+        print(f"AES-GCM encrypted (migrate): {total_aes}")
+        print(f"Unknown format:             {total_unknown}")
+        
+        if total_bcrypt > 0 and total_aes == 0:
+            print("\n✓ All passwords are BCrypt hashed. Migration complete!")
+            sys.exit(0)
+        elif total_aes > 0:
+            print("\n⚠ Legacy AES-GCM passwords detected. These need migration:")
+            print("  - Users must log in to trigger automatic re-hashing with BCrypt")
+            print("  - Or run a bulk migration script to re-encrypt with BCrypt")
+            sys.exit(0)  # Not an error - just informational
+        else:
+            print("\n⚠ No passwords found or all in unknown format.")
+            sys.exit(0)
+            
     finally:
-        cursor.close()
         conn.close()
-
-    print("\n✓ Done!")
+        print("\nDatabase connection closed.")
 
 
 if __name__ == "__main__":
-    try:
-        from Crypto.Cipher import AES
-    except ImportError:
-        print("✗ Missing required package: pycryptodome")
-        print("  Install with: pip install pycryptodome psycopg2-binary hvac")
-        sys.exit(1)
-
     main()

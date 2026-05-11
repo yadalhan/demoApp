@@ -5,10 +5,10 @@ plugins {
 }
 
 group = 'com.xaan'
-version = '0.0.3'
+version = '0.0.4'
 
 jar.archiveBaseName = 'xaandemo'
-jar.archiveVersion = '0.0.3'
+jar.archiveVersion = '0.0.4'
 
 java {
     toolchain {
@@ -32,9 +32,11 @@ dependencies {
     implementation 'org.springframework.cloud:spring-cloud-starter-vault-config'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
     
-    // Use vault-crypto package for encryption
-    implementation 'com.xaan:vault-crypto:0.0.1-SNAPSHOT'
+    // BCrypt password hashing (replaces vault-crypto)
+    implementation 'org.springframework.security:spring-security-crypto'
     
+    // vault-crypto removed - no longer needed with BCrypt
+
     compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
     
@@ -58,5 +60,5 @@ tasks.named('test') {
 
 bootJar {
     archiveBaseName = 'xaandemo'
-    archiveVersion = '0.0.3'
+    archiveVersion = '0.0.4'
 }

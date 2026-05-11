@@ -31,11 +31,12 @@ public class UserService {
             throw new IllegalArgumentException("이미 존재하는 사용자 ID입니다.");
         }
 
-        String encryptedPassword = passwordService.encryptPassword(dto.getPassword());
+        // 사용자 비밀번호는 BCrypt 단방향 해시
+        String hashedPassword = passwordService.hashUserPassword(dto.getPassword());
 
         User user = User.builder()
                 .userId(dto.getUserId())
-                .password(encryptedPassword)
+                .password(hashedPassword)
                 .username(dto.getUsername())
                 .build();
 
@@ -46,19 +47,16 @@ public class UserService {
         return userRepository.findByUserId(userId);
     }
 
+    /**
+     * 로그인 검증 - BCrypt 사용
+     */
     public boolean validateLogin(String userId, String rawPassword) {
         Optional<User> userOpt = userRepository.findByUserId(userId);
         if (userOpt.isEmpty()) {
             return false;
         }
         User user = userOpt.get();
-        try {
-            // Try to decrypt stored password and compare
-            String decryptedPassword = passwordService.decryptPassword(user.getPassword());
-            return decryptedPassword != null && decryptedPassword.equals(rawPassword);
-        } catch (Exception e) {
-            // Fallback to validate method if decryption fails
-            return passwordService.validatePassword(rawPassword, user.getPassword());
-        }
+        // BCrypt 검증
+        return passwordService.validateUserPassword(rawPassword, user.getPassword());
     }
 }
