@@ -3,6 +3,7 @@ package com.xaan.demo.controller;
 import com.xaan.demo.dto.LoginRequestDto;
 import com.xaan.demo.dto.UserRegisterRequestDto;
 import com.xaan.demo.service.UserService;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Controller;
@@ -42,17 +43,23 @@ public class AuthController {
 
     @PostMapping("/register")
     public String register(@RequestParam String userId, 
-                          @RequestParam String username, 
-                          @RequestParam String password,
-                          Model model) {
+                           @RequestParam String username, 
+                           @RequestParam String password,
+                           @RequestParam String residentRegistrationNumberFront,
+                           @RequestParam String residentRegistrationNumberBack,
+                           HttpServletResponse response,
+                           Model model) {
         try {
             UserRegisterRequestDto dto = new UserRegisterRequestDto();
             dto.setUserId(userId);
             dto.setUsername(username);
             dto.setPassword(password);
+            dto.setResidentRegistrationNumberFront(residentRegistrationNumberFront);
+            dto.setResidentRegistrationNumberBack(residentRegistrationNumberBack);
             userService.register(dto);
             return "redirect:/login?registered";
         } catch (IllegalArgumentException e) {
+            response.setStatus(HttpServletResponse.SC_BAD_REQUEST);
             model.addAttribute("error", e.getMessage());
             return "auth/register";
         }

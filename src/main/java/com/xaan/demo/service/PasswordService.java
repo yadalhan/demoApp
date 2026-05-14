@@ -167,7 +167,6 @@ public class PasswordService {
             SecretKeySpec keySpec = new SecretKeySpec(encryptionKey, "AES");
             GCMParameterSpec gcmSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
             cipher.init(Cipher.DECRYPT_MODE, keySpec, gcmSpec);
-            cipher.updateAAD(tag);
 
             byte[] decrypted = cipher.doFinal(ciphertextWithTag);
             return new String(decrypted, "UTF-8");

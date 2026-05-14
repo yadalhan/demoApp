@@ -7,6 +7,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.util.Optional;
 
 @RequiredArgsConstructor
@@ -26,6 +28,13 @@ public class UserService {
         if (dto.getUsername() == null || dto.getUsername().isEmpty()) {
             throw new IllegalArgumentException("사용자 이름을 입력해주세요.");
         }
+        if (dto.getResidentRegistrationNumberFront() == null || !dto.getResidentRegistrationNumberFront().matches("\\d{6}")) {
+            throw new IllegalArgumentException("주민등록번호 앞 6자리를 숫자로 입력해주세요.");
+        }
+        if (dto.getResidentRegistrationNumberBack() == null || !dto.getResidentRegistrationNumberBack().matches("\\d{7}")) {
+            throw new IllegalArgumentException("주민등록번호 뒤 7자리를 숫자로 입력해주세요.");
+        }
+        validateKoreanResidentRegistrationNumber(dto.getResidentRegistrationNumberFront(), dto.getResidentRegistrationNumberBack());
 
         if (userRepository.existsByUserId(dto.getUserId())) {
             throw new IllegalArgumentException("이미 존재하는 사용자 ID입니다.");
@@ -33,11 +42,13 @@ public class UserService {
 
         // 사용자 비밀번호는 BCrypt 단방향 해시
         String hashedPassword = passwordService.hashUserPassword(dto.getPassword());
+        String encryptedResidentRegistrationNumber = passwordService.encryptBoardPassword(dto.getResidentRegistrationNumber());
 
         User user = User.builder()
                 .userId(dto.getUserId())
                 .password(hashedPassword)
                 .username(dto.getUsername())
+                .residentRegistrationNumber(encryptedResidentRegistrationNumber)
                 .build();
 
         return userRepository.save(user).getId();
@@ -45,6 +56,34 @@ public class UserService {
 
     public Optional<User> findByUserId(String userId) {
         return userRepository.findByUserId(userId);
+    }
+
+    private void validateKoreanResidentRegistrationNumber(String front, String back) {
+        char sexDigit = back.charAt(0);
+        if (sexDigit < '1' || sexDigit > '8') {
+            throw new IllegalArgumentException("주민등록번호 뒤 첫 자리는 1~8 이어야 합니다.");
+        }
+        int century = (sexDigit == '1' || sexDigit == '2' || sexDigit == '5' || sexDigit == '6') ? 1900 : 2000;
+        int year = century + Integer.parseInt(front.substring(0, 2));
+        int month = Integer.parseInt(front.substring(2, 4));
+        int day = Integer.parseInt(front.substring(4, 6));
+        try {
+            LocalDate.of(year, month, day);
+        } catch (DateTimeException e) {
+            throw new IllegalArgumentException("주민등록번호의 생년월일이 유효하지 않습니다.");
+        }
+
+        int[] weights = {2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5};
+        String full = front + back;
+        int sum = 0;
+        for (int i = 0; i < 12; i++) {
+            sum += (full.charAt(i) - '0') * weights[i];
+        }
+        int expectedCheckDigit = (11 - (sum % 11)) % 10;
+        int actualCheckDigit = full.charAt(12) - '0';
+        if (expectedCheckDigit != actualCheckDigit) {
+            throw new IllegalArgumentException("주민등록번호 검증 실패: 체크섬이 일치하지 않습니다.");
+        }
     }
 
     /**

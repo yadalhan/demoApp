@@ -84,3 +84,4 @@ my_env/
 # Excluded from git to prevent leaking secrets
 AGENTS.md
 src/main/resources/application.properties
+..sisyphus/

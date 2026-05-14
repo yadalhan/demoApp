@@ -23,11 +23,15 @@ public class User {
     @Column(length = 100, nullable = false)
     private String username;
 
+    @Column(name = "id_no", length = 255)
+    private String residentRegistrationNumber;
+
     @Builder
-    public User(String userId, String password, String username) {
+    public User(String userId, String password, String username, String residentRegistrationNumber) {
         this.userId = userId;
         this.password = password;
         this.username = username;
+        this.residentRegistrationNumber = residentRegistrationNumber;
     }
 
     public void updatePassword(String password) {

@@ -11,4 +11,10 @@ public class UserRegisterRequestDto {
     private String userId;
     private String password;
     private String username;
+    private String residentRegistrationNumberFront;
+    private String residentRegistrationNumberBack;
+
+    public String getResidentRegistrationNumber() {
+        return residentRegistrationNumberFront + residentRegistrationNumberBack;
+    }
 }

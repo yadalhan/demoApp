@@ -49,6 +49,18 @@
                                 <input type="text" class="form-control" id="username" name="username" required>
                             </div>
                             <div class="mb-3">
+                                <label class="form-label">주민등록번호</label>
+                                <div class="row g-2 align-items-center">
+                                    <div class="col">
+                                        <input type="text" class="form-control" id="residentRegistrationNumberFront" name="residentRegistrationNumberFront" inputmode="numeric" pattern="\d{6}" maxlength="6" placeholder="앞 6자리" required>
+                                    </div>
+                                    <div class="col-auto text-muted">-</div>
+                                    <div class="col">
+                                        <input type="password" class="form-control" id="residentRegistrationNumberBack" name="residentRegistrationNumberBack" inputmode="numeric" pattern="\d{7}" maxlength="7" placeholder="뒤 7자리" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
                                 <label for="password" class="form-label">비밀번호</label>
                                 <div class="password-wrapper">
                                     <input type="password" class="form-control" id="password" name="password" required>
@@ -107,6 +119,8 @@
             const data = {
                 userId: document.getElementById('userId').value,
                 username: document.getElementById('username').value,
+                residentRegistrationNumberFront: document.getElementById('residentRegistrationNumberFront').value,
+                residentRegistrationNumberBack: document.getElementById('residentRegistrationNumberBack').value,
                 password: password
             };
             
