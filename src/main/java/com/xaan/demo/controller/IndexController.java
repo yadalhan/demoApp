@@ -65,4 +65,22 @@ public class IndexController {
         model.addAttribute("posts", posts.getContent());
         return "list1stonly";
     }
+
+    @GetMapping("/bbs_summary")
+    public String bbsSummary(Model model, HttpSession session) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        model.addAttribute("summaries", boardService.getBoardSummary());
+        return "bbs_summary";
+    }
+
+    @GetMapping("/bbs_summary_cached")
+    public String bbsSummaryCached(Model model, HttpSession session) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        model.addAttribute("summaries", boardService.getBoardSummaryCached());
+        return "bbs_summary";
+    }
 }

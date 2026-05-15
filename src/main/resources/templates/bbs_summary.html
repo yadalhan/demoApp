@@ -1,39 +1,35 @@
 <!DOCTYPE HTML>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <title>Board(All List)</title>
+    <title>BBS Summary</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
     <div class="container mt-5">
         <div class="d-flex justify-content-between align-items-center">
-            <h1>🚀 Springboot BBS</h1>
+            <h1>🚀 Springboot BBS Summary</h1>
             <button class="btn btn-outline-secondary" onclick="location.href='/logout'">로그아웃</button>
         </div>
         <div class="row mt-4">
             <div class="col">
-                <button class="btn btn-primary" onclick="location.href='/posts/save'">글 등록</button>
-                <button class="btn btn-info text-white ms-2" onclick="location.href='/bbs_summary'">게시글 요약</button>
-                <button class="btn btn-warning text-dark ms-2" onclick="location.href='/bbs_summary_cached'">게시글 요약(Cached)</button>
+                <button class="btn btn-primary" onclick="location.href='/'">목록으로</button>
             </div>
         </div>
 
         <table class="table table-horizontal table-bordered mt-3">
             <thead class="table-dark">
             <tr>
-                <th>게시글번호</th>
-                <th>제목</th>
-                <th>작성자</th>
-                <th>최종수정일</th>
+                <th class="text-center">작성일(Post Date)</th>
+                <th class="text-end">내용 크기 합계(Content Size)</th>
+                <th class="text-end">게시글 수(Articles)</th>
             </tr>
             </thead>
             <tbody id="tbody">
-            <tr th:each="post : ${posts}">
-                <td th:text="${post.id}"></td>
-                <td><a th:href="@{/posts/update/{id}(id=${post.id})}" th:text="${post.title}"></a></td>
-                <td th:text="${post.author}"></td>
-                <td th:text="${#temporals.format(post.modifiedDate, 'yyyy-MM-dd HH:mm')}"></td>
+            <tr th:each="summary : ${summaries}">
+                <td class="text-center" th:text="${#dates.format(summary.postDate, 'yyyy-MM-dd')}"></td>
+                <td class="text-end" th:text="${#numbers.formatInteger(summary.contentSize, 0, 'COMMA')}"></td>
+                <td class="text-end" th:text="${#numbers.formatInteger(summary.articles, 0, 'COMMA')}"></td>
             </tr>
             </tbody>
         </table>

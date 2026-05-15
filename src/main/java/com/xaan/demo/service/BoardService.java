@@ -80,6 +80,22 @@ public class BoardService {
                 .collect(Collectors.toList());
     }
 
+    @Transactional(readOnly = true)
+    public List<com.xaan.demo.dto.BoardSummaryDto> getBoardSummary() {
+        return boardRepository.getBoardSummary();
+    }
+
+    @org.springframework.cache.annotation.Cacheable(value = "boardSummary")
+    @Transactional(readOnly = true)
+    public List<com.xaan.demo.dto.BoardSummaryResponseDto> getBoardSummaryCached() {
+        return boardRepository.getBoardSummary().stream()
+                .map(summary -> new com.xaan.demo.dto.BoardSummaryResponseDto(
+                        summary.getPostDate(),
+                        summary.getContentSize(),
+                        summary.getArticles()))
+                .collect(Collectors.toList());
+    }
+
     // 게시글 비밀번호 검증
     public boolean verifyPassword(Long id, String password) {
         Board board = boardRepository.findById(id)

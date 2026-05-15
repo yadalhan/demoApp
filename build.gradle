@@ -35,6 +35,9 @@ dependencies {
     // BCrypt password hashing (replaces vault-crypto)
     implementation 'org.springframework.security:spring-security-crypto'
     
+    // Redis for caching
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    
     // vault-crypto removed - no longer needed with BCrypt
 
     compileOnly 'org.projectlombok:lombok'
