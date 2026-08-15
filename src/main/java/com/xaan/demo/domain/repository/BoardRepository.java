@@ -14,7 +14,7 @@ public interface BoardRepository extends JpaRepository<Board,Long> {
     Slice<Board> findByOrderByIdDesc(Pageable pageable);
     List<Board>  findTop100ByOrderByIdDesc();
     
-    @org.springframework.data.jpa.repository.Query(value = "select created_date\\:\\:date as postDate, sum(length(content)) as contentSize, count(id) as articles " +
+    @org.springframework.data.jpa.repository.Query(value = "select created_date\\:\\:date as postDate, sum(length(content)) as contentSize, count(id) as articles, to_char(max(created_date),'yyyy-mm-dd hh24:mi:ss') as last_time " +
             "from ebiz.board " +
             "group by created_date\\:\\:date " +
             "order by 1 desc", nativeQuery = true)

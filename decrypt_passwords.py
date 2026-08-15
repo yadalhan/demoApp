@@ -10,8 +10,39 @@ import sys
 import base64
 
 import bcrypt
+from Cryptodome.Cipher import AES
+
 
 # Add my_env site-packages to path
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'my_env', 'lib', 'python3.12', 'site-packages'))
+
+key_b64="NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y="
+# Helper to obtain AES‑GCM key from environment variable
+def get_aes_gcm_key():
+    import os, base64, sys
+    #key_b64 = os.getenv('AES_GCM_KEY')
+    if not key_b64:
+        print('[ERROR] AES_GCM_KEY environment variable not set', file=sys.stderr)
+        sys.exit(1)
+    try:
+        return base64.urlsafe_b64decode(key_b64)
+    except Exception as e:
+        print(f'[ERROR] Failed to decode AES_GCM_KEY: {e}', file=sys.stderr)
+        sys.exit(1)
+
+# AES‑GCM decryption helper
+def decrypt_aes_gcm(ciphertext_b64: str, key_bytes: bytes) -> str:
+    try:
+        data = base64.urlsafe_b64decode(ciphertext_b64)
+        iv = data[:12]
+        tag = data[-16:]
+        ciphertext = data[12:-16]
+        cipher = AES.new(key_bytes, AES.MODE_GCM, nonce=iv)
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+        return plaintext.decode('utf-8')
+    except Exception as e:
+        print(f'[ERROR] AES‑GCM decryption failed: {e}', file=sys.stderr)
+        return "<decryption error>"
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'my_env', 'lib', 'python3.12', 'site-packages'))
 
 DB_CONFIG = {
@@ -93,7 +124,7 @@ def check_board_passwords(conn):
     """Check all board entries with passwords and classify them."""
     cursor = conn.cursor()
     
-    cursor.execute("SELECT id, password FROM board WHERE password IS NOT NULL AND password != '' ORDER BY id")
+    cursor.execute("SELECT id, password FROM board WHERE password IS NOT NULL AND password != '' ORDER BY id desc fetch next 10 rows only")
     rows = cursor.fetchall()
     
     print(f"\nFound {len(rows)} board entries with passwords")
@@ -109,7 +140,10 @@ def check_board_passwords(conn):
             status = "✓ BCrypt hash"
         elif is_old_aes_gcm_encrypted(password):
             aes_gcm_count += 1
-            status = "⚠ AES-GCM encrypted (needs migration)"
+            # Decrypt and show plaintext
+            key = get_aes_gcm_key()
+            plaintext = decrypt_aes_gcm(password, key)
+            status = f"⚠ AES-GCM encrypted (decrypted: {plaintext})"
         else:
             unknown_count += 1
             status = "? Unknown format"
@@ -130,7 +164,7 @@ def check_user_passwords(conn):
     cursor = conn.cursor()
     
     # Use correct column name: user_id (not userid)
-    cursor.execute("SELECT id, user_id, password, username FROM users WHERE password IS NOT NULL ORDER BY id")
+    cursor.execute("SELECT id, user_id, password, username FROM users WHERE password IS NOT NULL ORDER BY id desc fetch next 10 rows only")
     rows = cursor.fetchall()
     
     print(f"\nFound {len(rows)} user entries with passwords")
@@ -208,6 +242,33 @@ def main():
     
     # Connect to database
     conn = get_connection()
+    # Perform user ID number decryption check
+    def check_user_idnos(conn):
+        """Check latest 10 user id_no entries encrypted with AES‑GCM"""
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, user_id, id_no, username FROM users WHERE id_no IS NOT NULL AND id_no != '' ORDER BY id DESC FETCH NEXT 10 ROWS ONLY")
+        rows = cursor.fetchall()
+        print(f"\nFound {len(rows)} user ID numbers")
+        print("=" * 70)
+        bcrypt_cnt = aes_cnt = unk_cnt = 0
+        for uid, user_id, id_no_enc, username in rows:
+            if is_old_aes_gcm_encrypted(id_no_enc):
+                aes_cnt += 1
+                key = get_aes_gcm_key()
+                plaintext = decrypt_aes_gcm(id_no_enc, key)
+                status = f"⚠ AES‑GCM (decrypted: {plaintext})"
+            else:
+                unk_cnt += 1
+                status = "? Unknown format"
+            print(f"  User ID {uid} ({username}): {status}")
+        cursor.close()
+        print("\nID No Summary:")
+        print(f"  AES‑GCM encrypted: {aes_cnt}")
+        print(f"  Unknown format: {unk_cnt}")
+        return {"aes_gcm": aes_cnt, "unknown": unk_cnt}
+
+    # Run additional checks
+    user_idno_results = check_user_idnos(conn)
     
     try:
         # Check board passwords

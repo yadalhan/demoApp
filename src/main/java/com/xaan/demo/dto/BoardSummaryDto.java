@@ -6,4 +6,5 @@ public interface BoardSummaryDto {
     Date getPostDate();
     Long getContentSize();
     Long getArticles();
+    String getLastTime();
 }

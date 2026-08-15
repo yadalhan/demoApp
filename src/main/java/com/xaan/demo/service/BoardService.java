@@ -92,7 +92,8 @@ public class BoardService {
                 .map(summary -> new com.xaan.demo.dto.BoardSummaryResponseDto(
                         summary.getPostDate(),
                         summary.getContentSize(),
-                        summary.getArticles()))
+                        summary.getArticles(),
+                        summary.getLastTime()))
                 .collect(Collectors.toList());
     }
 

@@ -12,7 +12,7 @@ A Spring Boot demo application with comprehensive features for board/article man
 - **Vault configuration** for secrets management
 - **Gradle build system** with wrapper
 - **Spring Cloud Vault** integration
-- **Password encryption service** - Using `vault-crypto` package (separate JAR)
+- **Password encryption service** - BCrypt (사용자 비밀번호) + `vault-crypto` (게시글/개인정보 AES-GCM 암호화)
 - **Pagination support** for board listings
 
 ## Project Structure
@@ -25,20 +25,25 @@ src/main/java/com/xaan/demo/
 ├── controller/
 │   ├── BoardApiController.java   # REST API controller
 │   ├── IndexController.java      # Main page controller
-│   └── Top100IndexController.java # Top 100 listings controller
+│   ├── Top100IndexController.java # Top 100 listings controller
+│   └── UserController.java       # User registration/login controller
 ├── domain/
 │   ├── entity/
 │   │   ├── BaseTimeEntity.java   # Base entity with timestamps
-│   │   └── Board.java            # Board entity
+│   │   ├── Board.java            # Board entity
+│   │   └── User.java             # User entity
 │   └── repository/
-│       └── BoardRepository.java  # JPA repository
+│       ├── BoardRepository.java  # Board JPA repository
+│       └── UserRepository.java   # User JPA repository
 ├── dto/
 │   ├── BoardResponseDto.java     # Response DTO
 │   ├── BoardSaveRequestDto.java  # Save request DTO
-│   └── BoardUpdateRequestDto.java # Update request DTO
+│   ├── BoardUpdateRequestDto.java # Update request DTO
+│   └── UserRegisterRequestDto.java # User registration DTO
 └── service/
-    ├── BoardService.java         # Business logic service
-    └── PasswordService.java      # Password encryption service (uses vault-crypto)
+    ├── BoardService.java         # Board business logic
+    ├── PasswordService.java      # Password encryption (BCrypt + vault-crypto)
+    └── UserService.java          # User business logic
 
 src/main/resources/
 ├── application.properties        # Application configuration
@@ -98,8 +103,8 @@ spring.cloud.vault.fail-fast=false
 
 ### vault-crypto Package
 Encryption functionality is extracted into a separate package:
-- **Location**: `/home/xaan/opencode/projects/vault-crypto/`
-- **Build**: `./gradlew build publishToMavenLocal`
+- **Repository**: `vault-crypto/` (별도 프로젝트)
+- **Build**: `gradle.bat clean build publishToMavenLocal` (Windows) 또는 `./gradlew clean build publishToMavenLocal` (Linux)
 - **Usage**: See `vault-crypto/README.md` for details
 
 ### Setting up Vault Secrets
@@ -122,37 +127,27 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 ## Building the Project
 
 > **⚠️ Build Environment Notes:**
-> - **JAVA_HOME**: `/usr/lib/jvm/java-17-openjdk-amd64` (Required: Project needs Java 17, system default is Java 8)
-> - **GRADLE_HOME**: `/opt/gradle/gradle-8.7` (Optional: Project uses Gradle wrapper `./gradlew`)
-> - Always set JAVA_HOME before building, or use the provided scripts that handle this automatically.
+> - **Windows**: `JAVA_HOME=C:\SW\jdk-17.0.15`, `GRADLE_HOME=C:\SW\gradle-8.14.5\bin`
+> - **Linux**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, `GRADLE_HOME=/opt/gradle/gradle-8.7`
+> - Always set JAVA_HOME before building, or use the provided scripts.
 
-### Using the provided build script (Recommended):
-```bash
-# This script automatically sets JAVA_HOME and PATH
-./build-with-env.sh
+### Windows (Recommended):
+```bat
+set JAVA_HOME=C:\SW\jdk-17.0.15
+set PATH=%JAVA_HOME%\bin;C:\SW\gradle-8.14.5\bin;%PATH%
+
+REM Build (deploy.bat handles build + deploy)
+deploy.bat
+
+REM Or build only
+gradle.bat clean build
 ```
 
-### Using Gradle wrapper:
-```bash
-# Set environment variables first
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
-export PATH=$JAVA_HOME/bin:$PATH
-export PATH=/opt/gradle/gradle-8.7/bin:$PATH
-
-# Build the project
-./gradlew clean build
-
-# Run tests
-./gradlew test
-
-# Run the application
-./gradlew bootRun
-```
-
-### Quick build with environment:
+### Linux:
 ```bash
 export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
+
 ./gradlew clean build
 ```
 
@@ -167,7 +162,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.3.jar
+   java -jar build/libs/xaandemo-0.0.4.jar
    ```
 
 3. **Access the application:**
@@ -215,52 +210,56 @@ CREATE TABLE ebiz.board (
 > **Password Storage**: Passwords are encrypted using `vault-crypto` package (AES-256/GCM/NoPadding, authenticated encryption).
 > See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
 > Python decryption script (`decrypt_passwords.py`) available for verification.
-> vault-crypto package: `/home/xaan/opencode/projects/vault-crypto/README.md`
 
 ## Security Features
 
-1. **Password Encryption**: AES-256 encryption via `vault-crypto` package
-   - Implementation: `PasswordService.java` uses `VaultCryptoService`
+1. **Password Encryption**:
+   - **사용자 비밀번호**: BCrypt 단방향 해시 (`spring-security-crypto`)
+   - **게시글 비밀번호 / 개인정보**: AES-256 GCM 양방향 암호화 (`vault-crypto`)
+   - Implementation: `PasswordService.java` uses `VaultCryptoService` + `BCryptPasswordEncoder`
    - Encryption key from Vault kv-v2 (32-byte Fernet key as AES-256 key)
-    - Package: `com.xaan:vault-crypto:0.0.1`
+   - Package: `com.xaan:vault-crypto:0.0.1`
    - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
-   - Python decryption script available for testing (`decrypt_passwords.py`)
-   - ✅ **Production tested** (2026-05-08): Encryption/decryption verified
+   - ✅ **Production tested** (2026-05-18): vault-crypto 재통합 후 배포 검증 완료
 
 2. **Vault Integration**: External secrets management with Spring Cloud Vault
-2. **Vault Integration**: External secrets management with Spring Cloud Vault
    - Configured to connect to Vault server at `http://192.168.2.57:8200`
-   - Fail-fast disabled to allow startup without Vault
-3. **Input Validation**: Server-side validation
+   - Fail-fast enabled for production safety
+3. **Input Validation**: Server-side validation (주민등록번호 체크섬 검증 포함)
 4. **SQL Injection Protection**: Using JPA prepared statements
 
 ## Deployment
 
-### Using deploy.sh (Recommended)
+### Using deploy.bat (Windows - Recommended)
 The project includes a deployment script for production server (192.168.2.57):
 
-```bash
-./deploy.sh
+```bat
+deploy.bat
 ```
 
 This script will:
 1. Build the application with Java 17
-2. Distribute the JAR to production server
+2. Distribute the JAR to production server via SCP
 3. Stop the running application
 4. Start the new version
-5. Verify the deployment
+5. Wait for readiness and verify the deployment
+
+### Using deploy.sh (Linux)
+```bash
+./deploy.sh
+```
 
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.3.jar app.jar
+COPY build/libs/xaandemo-0.0.4.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
-1. Build the JAR: `./gradlew clean build`
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.3.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.3.jar`
+1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.4.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.4.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +285,27 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.4 (2026-05-18)
+
+**vault-crypto Re-integration & BCrypt Migration** - 암호화 전략 이원화 및 vault-crypto 라이브러리 재통합.
+
+**Changes:**
+- `PasswordService.java` 리팩토링: 인라인 AES-GCM 코드(~120줄) 제거 → `vault-crypto` 라이브러리 위임 (75줄)
+- 사용자 비밀번호: BCrypt 단방향 해시 (`spring-security-crypto`)
+- 게시글 비밀번호 / 주민등록번호: AES-256 GCM 양방향 암호화 (`vault-crypto`)
+- `PasswordServiceTest.java`: VaultOperations mock 방식으로 테스트 개선
+- 빌드/배포 환경을 Windows로 전환 (`deploy.bat`)
+- Redis 캐싱 통합 (`spring-boot-starter-data-redis`)
+- Connection pool size 30으로 설정
+- ✅ Production tested (2026-05-18): Post 2064044 암호화/복호화 검증 완료
+
+**Dependencies:**
+```groovy
+implementation 'com.xaan:vault-crypto:0.0.1'         // AES-GCM 암호화
+implementation 'org.springframework.security:spring-security-crypto' // BCrypt
+implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+```
 
 ### v0.0.3 (2026-05-08)
 
@@ -315,34 +335,11 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 ### v0.0.2 (2026-05-06)
 
-**Vault Integration Release** - Initial integration with HashiCorp Vault for secrets management.
-
-**Features:**
-- Spring Cloud Vault integration
-- Vault kv-v2 backend configuration
-- Fail-fast disabled for graceful degradation
-
-**Bug Fixes:**
-- Fixed Vault URI and token configuration in `application.properties`
-- Fixed password encryption in `BoardService.java` (injected PasswordService)
-- Migrated old plain-text passwords to encrypted format
-
-**Deployment:**
-- Deploy script (`deploy.sh`) for production server
-- Production URL: http://192.168.2.57:8080
+**Vault Integration Release** - Initial integration with HashiCorp Vault.
 
 ### v0.0.1 (2026-05-06)
 
 **Initial release** - Spring Boot demo application with board/article management.
-
-**Features:**
-- Spring Boot 3.4.0 with Java 17
-- PostgreSQL database integration (schema: `ebiz.board`)
-- JPA with Hibernate for data persistence
-- Thymeleaf templating engine
-- REST API (`/api/v1/posts`) and web pages
-- Gradle build system with wrapper
-- Pagination support for board listings
 
 This project is available for use under the MIT License.
 

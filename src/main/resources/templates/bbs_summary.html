@@ -23,6 +23,7 @@
                 <th class="text-center">작성일(Post Date)</th>
                 <th class="text-end">내용 크기 합계(Content Size)</th>
                 <th class="text-end">게시글 수(Articles)</th>
+                <th class="text-center">최종 작성 시간(Last Time)</th>
             </tr>
             </thead>
             <tbody id="tbody">
@@ -30,6 +31,7 @@
                 <td class="text-center" th:text="${#dates.format(summary.postDate, 'yyyy-MM-dd')}"></td>
                 <td class="text-end" th:text="${#numbers.formatInteger(summary.contentSize, 0, 'COMMA')}"></td>
                 <td class="text-end" th:text="${#numbers.formatInteger(summary.articles, 0, 'COMMA')}"></td>
+                <td class="text-center" th:text="${summary.lastTime}"></td>
             </tr>
             </tbody>
         </table>
