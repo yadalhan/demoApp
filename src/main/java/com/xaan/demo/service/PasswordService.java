@@ -1,12 +1,11 @@
 package com.xaan.demo.service;
 
-import com.xaan.vault.crypto.VaultCryptoService;
+import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
-import org.springframework.vault.core.VaultOperations;
 
 @Service
 public class PasswordService {
@@ -14,14 +13,16 @@ public class PasswordService {
     private static final Logger logger = LoggerFactory.getLogger(PasswordService.class);
 
     private final BCryptPasswordEncoder bCryptPasswordEncoder;
-    private final VaultCryptoService vaultCryptoService;
+    private final EnvelopeCryptoService boardCryptoService;
+    private final EnvelopeCryptoService userPiiCryptoService;
 
     public PasswordService(
-            VaultOperations vaultOperations,
-            @Value("${vault.secret.path:ebiz_service/data/ebiz_db/data-enc-key}") String vaultSecretPath) {
+            @Qualifier("boardCryptoService") EnvelopeCryptoService boardCryptoService,
+            @Qualifier("userPiiCryptoService") EnvelopeCryptoService userPiiCryptoService) {
         this.bCryptPasswordEncoder = new BCryptPasswordEncoder();
-        this.vaultCryptoService = new VaultCryptoService(vaultOperations, vaultSecretPath);
-        logger.info("PasswordService initialized with vault-crypto (path: {})", vaultSecretPath);
+        this.boardCryptoService = boardCryptoService;
+        this.userPiiCryptoService = userPiiCryptoService;
+        logger.info("PasswordService initialized with KEK-DEK envelope encryption (board, user-pii domains)");
     }
 
     /**
@@ -39,24 +40,38 @@ public class PasswordService {
     }
 
     /**
-     * AES-GCM 양방향 암호화 - 게시글 비밀번호용 (vault-crypto 사용)
+     * AES-GCM 봉투 암호화 (board 도메인 DEK) - 게시글 비밀번호용
      */
     public String encryptBoardPassword(String password) {
-        return vaultCryptoService.encrypt(password);
+        return boardCryptoService.encrypt(password);
     }
 
     /**
-     * AES-GCM 복호화 - 게시글 비밀번호 검증용 (vault-crypto 사용)
+     * AES-GCM 복호화 - 게시글 비밀번호 검증용
      */
     public String decryptBoardPassword(String encryptedPassword) {
-        return vaultCryptoService.decrypt(encryptedPassword);
+        return boardCryptoService.decrypt(encryptedPassword);
     }
 
     /**
-     * 게시글 비밀번호 검증 (constant-time comparison via vault-crypto)
+     * 게시글 비밀번호 검증 (constant-time comparison)
      */
     public boolean validateBoardPassword(String rawPassword, String encryptedPassword) {
-        return vaultCryptoService.validate(rawPassword, encryptedPassword);
+        return boardCryptoService.validate(rawPassword, encryptedPassword);
+    }
+
+    /**
+     * AES-GCM 봉투 암호화 (user-pii 도메인 DEK) - 주민등록번호 등 개인정보용
+     */
+    public String encryptUserPii(String plainText) {
+        return userPiiCryptoService.encrypt(plainText);
+    }
+
+    /**
+     * AES-GCM 복호화 - 개인정보 컬럼용
+     */
+    public String decryptUserPii(String encryptedText) {
+        return userPiiCryptoService.decrypt(encryptedText);
     }
 
     /**

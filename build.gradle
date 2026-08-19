@@ -5,10 +5,10 @@ plugins {
 }
 
 group = 'com.xaan'
-version = '0.0.4'
+version = '0.0.5'
 
 jar.archiveBaseName = 'xaandemo'
-jar.archiveVersion = '0.0.4'
+jar.archiveVersion = '0.0.5'
 
 java {
     toolchain {
@@ -35,8 +35,8 @@ dependencies {
     // BCrypt password hashing
     implementation 'org.springframework.security:spring-security-crypto'
     
-    // vault-crypto: AES-256 GCM encryption (for board password, resident registration number)
-    implementation 'com.xaan:vault-crypto:0.0.1'
+    // vault-crypto: KEK-DEK envelope encryption (for board password, resident registration number)
+    implementation 'com.xaan:vault-crypto:0.0.5'
     
     // Redis for caching
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
@@ -64,5 +64,5 @@ tasks.named('test') {
 
 bootJar {
     archiveBaseName = 'xaandemo'
-    archiveVersion = '0.0.4'
+    archiveVersion = '0.0.5'
 }

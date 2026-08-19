@@ -42,7 +42,7 @@ public class UserService {
 
         // 사용자 비밀번호는 BCrypt 단방향 해시
         String hashedPassword = passwordService.hashUserPassword(dto.getPassword());
-        String encryptedResidentRegistrationNumber = passwordService.encryptBoardPassword(dto.getResidentRegistrationNumber());
+        String encryptedResidentRegistrationNumber = passwordService.encryptUserPii(dto.getResidentRegistrationNumber());
 
         User user = User.builder()
                 .userId(dto.getUserId())
