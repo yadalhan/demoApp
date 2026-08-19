@@ -12,7 +12,7 @@ A Spring Boot demo application with comprehensive features for board/article man
 - **Vault configuration** for secrets management
 - **Gradle build system** with wrapper
 - **Spring Cloud Vault** integration
-- **Password encryption service** - BCrypt (사용자 비밀번호) + `vault-crypto` (게시글/개인정보 AES-GCM 암호화)
+- **Password encryption service** - BCrypt (사용자 비밀번호) + `vault-crypto` (게시글/개인정보 KEK-DEK 봉투 암호화, AES-GCM)
 - **Pagination support** for board listings
 
 ## Project Structure
@@ -88,18 +88,19 @@ spring.cloud.vault.token=${VAULT_TOKEN}
 spring.cloud.vault.fail-fast=false
 ```
 
-### Vault kv-v2 Integration
+### Vault kv-v2 Integration (KEK-DEK envelope encryption, since 2026-08-19)
 - **Mount**: `ebiz_service` (kv-v2)
-- **Secret Path**: `ebiz_db/data-enc-key`
-- **Key**: `fernet-key` (32 bytes, used as AES-256 key)
+- **KEK path**: `ebiz_db/kek` — master key, only used to wrap/unwrap DEKs
+- **DEK paths**: `ebiz_db/dek/board`, `ebiz_db/dek/user-pii` — one wrapped DEK per service domain, versioned
 - **Server**: 192.168.2.57:8200
+- See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design and `bootstrap_kek_dek.py` for how these secrets are generated
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.1`) provides encryption
-2. `PasswordService` delegates to `VaultCryptoService` for encrypt/decrypt
-3. Vault key is read at startup and used for AES-256 (GCM mode)
-4. Passwords stored as Base64-encoded encrypted strings in DB
-5. Python decryption script available for verification (`decrypt_passwords.py`)
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.5`) provides KEK-DEK envelope encryption
+2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`); each unwraps its DEK from Vault once at startup and caches it in memory
+3. `PasswordService` delegates to the domain-specific `EnvelopeCryptoService` for encrypt/decrypt/validate — no legacy fallback, no Vault call per request
+4. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB
+5. Python decryption script (`decrypt_passwords.py`) only understands the old single-key format now, unrelated to how the app currently encrypts
 
 ### vault-crypto Package
 Encryption functionality is extracted into a separate package:
@@ -162,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.4.jar
+   java -jar build/libs/xaandemo-0.0.5.jar
    ```
 
 3. **Access the application:**
@@ -215,12 +216,12 @@ CREATE TABLE ebiz.board (
 
 1. **Password Encryption**:
    - **사용자 비밀번호**: BCrypt 단방향 해시 (`spring-security-crypto`)
-   - **게시글 비밀번호 / 개인정보**: AES-256 GCM 양방향 암호화 (`vault-crypto`)
-   - Implementation: `PasswordService.java` uses `VaultCryptoService` + `BCryptPasswordEncoder`
-   - Encryption key from Vault kv-v2 (32-byte Fernet key as AES-256 key)
-   - Package: `com.xaan:vault-crypto:0.0.1`
-   - See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for details
-   - ✅ **Production tested** (2026-05-18): vault-crypto 재통합 후 배포 검증 완료
+   - **게시글 비밀번호 / 개인정보**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
+   - Implementation: `PasswordService.java` uses domain-scoped `EnvelopeCryptoService` (via `CryptoConfig`) + `BCryptPasswordEncoder`
+   - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음)
+   - Package: `com.xaan:vault-crypto:0.0.5`
+   - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
+   - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
 
 2. **Vault Integration**: External secrets management with Spring Cloud Vault
    - Configured to connect to Vault server at `http://192.168.2.57:8200`
@@ -252,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.4.jar app.jar
+COPY build/libs/xaandemo-0.0.5.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.4.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.4.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.5.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.5.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -285,6 +286,27 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.5 (2026-08-19)
+
+**KEK-DEK Envelope Encryption** - `vault-crypto`의 단일 평문 키 방식을 Vault KEK가 도메인별 DEK를 wrap하는 봉투 암호화 모델로 전환.
+
+**Changes:**
+- `vault-crypto`에 `envelope` 패키지 추가: `KekService`, `DekProvider`/`VaultDekProvider`, `DomainKeyRing`, `EnvelopeCryptoService`, `DekRotationSupport` — 도메인(`board`, `user-pii`)별로 독립된 DEK를 앱 기동 시 1회 unwrap해 메모리에 캐시, 이후 암/복호화는 Vault 호출 없이 로컬에서 수행
+- 암호문 포맷에 `domainCode`+`keyVersion` 헤더 추가 (도메인 격리 + 향후 키 로테이션 지원)
+- `CryptoConfig` 신설, `PasswordService`/`UserService`를 도메인별 서비스로 전환. `UserService.register()`가 RRN 암호화에 `encryptBoardPassword()`를 재사용하던 네이밍 문제를 `encryptUserPii()`로 정리
+- **기존 암호화 데이터 마이그레이션 포기**: `users` 테이블은 전체 삭제 예정, `board.password`의 기존 암호화 데이터는 무시하기로 결정 — 레거시 복호화 폴백과 백필 마이그레이션 코드를 모두 제거
+- **`VaultCryptoService`(단일 키 방식) 완전 삭제**: 이를 사용하던 기존 소비 프로젝트는 무시하기로 결정하고 vault-crypto에서 클래스 자체를 제거(breaking change)
+- P0(Vault에 KEK/DEK 시크릿 생성) 완료 확인 — 앱이 Vault에서 KEK/DEK를 정상적으로 로드함
+- `vault-crypto` `0.0.1 → 0.0.5`, demoApp `0.0.4 → 0.0.5`로 버전 정렬
+- 상세 설계/이력: [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md), `vault-crypto/README.md`
+
+**Dependencies:**
+```groovy
+implementation 'com.xaan:vault-crypto:0.0.5'          // KEK-DEK 봉투 암호화
+implementation 'org.springframework.security:spring-security-crypto' // BCrypt
+implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+```
 
 ### v0.0.4 (2026-05-18)
 

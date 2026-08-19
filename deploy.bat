@@ -7,7 +7,7 @@ set PROD_SERVER=192.168.2.57
 set PROD_USER=xaan
 set PROD_APP_DIR=/home/xaan/ws/demoBBS/app
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS
-set JAR_FILE=build\libs\xaandemo-0.0.4.jar
+set JAR_FILE=build\libs\xaandemo-0.0.5.jar
 set STOP_SCRIPT=%PROD_BASE_DIR%/stopapp.sh
 set START_SCRIPT=%PROD_BASE_DIR%/startapp.sh
 set LOG_DIR=%PROD_BASE_DIR%/log
@@ -58,7 +58,7 @@ if %ERRORLEVEL% EQU 0 (
 echo.
 echo [Step 3/4] Waiting for process to stop and starting...
 
-ssh "%PROD_USER%@%PROD_SERVER%" "if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.4.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.4.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar; fi; bash /home/xaan/ws/demoBBS/startapp.sh; echo 'Start script executed.'"
+ssh "%PROD_USER%@%PROD_SERVER%" "if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar; fi; bash /home/xaan/ws/demoBBS/startapp.sh; echo 'Start script executed.'"
 if %ERRORLEVEL% EQU 0 (
     echo Application start command executed.
 ) else (
