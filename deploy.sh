@@ -7,7 +7,10 @@ PROD_SERVER="192.168.2.57"
 PROD_USER="xaan"
 PROD_APP_DIR="/home/xaan/ws/demoBBS/app"
 PROD_BASE_DIR="/home/xaan/ws/demoBBS"
-JAR_FILE="build/libs/xaandemo-0.0.5.jar"
+JAR_VERSION="0.0.6"
+JAR_BASENAME="xaandemo-${JAR_VERSION}.jar"
+JAR_FILE="build/libs/${JAR_BASENAME}"
+PROD_LINK_NAME="xaandemo-prod.jar"
 STOP_SCRIPT="${PROD_BASE_DIR}/stopapp.sh"
 START_SCRIPT="${PROD_BASE_DIR}/startapp.sh"
 LOG_DIR="${PROD_BASE_DIR}/log"
@@ -45,6 +48,11 @@ else
     exit 1
 fi
 
+if ! scp "relink_prod_jar.sh" "${PROD_USER}@${PROD_SERVER}:${PROD_BASE_DIR}/relink_prod_jar.sh"; then
+    echo -e "${RED}Failed to distribute relink_prod_jar.sh.${NC}"
+    exit 1
+fi
+
 echo -e "\n${YELLOW}[Step 2/4] Stopping application on ${PROD_SERVER}...${NC}"
 
 if ssh "${PROD_USER}@${PROD_SERVER}" "bash ${STOP_SCRIPT}"; then
@@ -55,19 +63,11 @@ fi
 
 echo -e "\n${YELLOW}[Step 3/4] Waiting for process to stop and starting...${NC}"
 
-ssh "${PROD_USER}@${PROD_SERVER}" bash << 'EOF'
-while pgrep -f "xaandemo-0.0.5-SNAPSHOT.jar" > /dev/null 2>&1; do
-    echo "Process still running, waiting 1 second..."
-    sleep 1
-done
-echo "Process is down. Starting application..."
-# Copy new JAR to production jar name if different
-if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then
-    cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar
-fi
-bash /home/xaan/ws/demoBBS/startapp.sh
-echo "Start script executed."
-EOF
+# relink_prod_jar.sh does the wait/relink/start on the remote side. Passed as
+# plain ssh arguments (no embedded shell syntax to quote) - see that file for
+# why this replaced an earlier inline version.
+ssh "${PROD_USER}@${PROD_SERVER}" bash "${PROD_BASE_DIR}/relink_prod_jar.sh" \
+    "$JAR_BASENAME" "$PROD_APP_DIR" "$PROD_BASE_DIR" "$PROD_LINK_NAME"
 
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}Application start command executed.${NC}"

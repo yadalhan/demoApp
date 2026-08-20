@@ -7,7 +7,10 @@ set PROD_SERVER=192.168.2.57
 set PROD_USER=xaan
 set PROD_APP_DIR=/home/xaan/ws/demoBBS/app
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS
-set JAR_FILE=build\libs\xaandemo-0.0.5.jar
+set JAR_VERSION=0.0.6
+set JAR_BASENAME=xaandemo-%JAR_VERSION%.jar
+set JAR_FILE=build\libs\%JAR_BASENAME%
+set PROD_LINK_NAME=xaandemo-prod.jar
 set STOP_SCRIPT=%PROD_BASE_DIR%/stopapp.sh
 set START_SCRIPT=%PROD_BASE_DIR%/startapp.sh
 set LOG_DIR=%PROD_BASE_DIR%/log
@@ -45,6 +48,12 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo JAR file distributed successfully.
 
+scp "relink_prod_jar.sh" "%PROD_USER%@%PROD_SERVER%:%PROD_BASE_DIR%/relink_prod_jar.sh"
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to distribute relink_prod_jar.sh.
+    exit /b 1
+)
+
 echo.
 echo [Step 2/4] Stopping application on %PROD_SERVER%...
 
@@ -58,7 +67,14 @@ if %ERRORLEVEL% EQU 0 (
 echo.
 echo [Step 3/4] Waiting for process to stop and starting...
 
-ssh "%PROD_USER%@%PROD_SERVER%" "if ! cmp -s /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar 2>/dev/null; then cp /home/xaan/ws/demoBBS/app/xaandemo-0.0.5.jar /home/xaan/ws/demoBBS/xaandemo-prod.jar; fi; bash /home/xaan/ws/demoBBS/startapp.sh; echo 'Start script executed.'"
+REM relink_prod_jar.sh does the wait/relink/start on the remote side. Passed as
+REM separate, plainly-quoted ssh arguments - no bash syntax embedded in a single
+REM cmd.exe string this time. An earlier version inlined the wait/relink/start
+REM logic directly into one quoted ssh argument; that silently failed to relink
+REM in practice (cmd.exe -> ssh -> bash quoting of $(...), [ ... ], redirects
+REM together in one string was too fragile to get right), so the logic was moved
+REM into relink_prod_jar.sh instead.
+ssh "%PROD_USER%@%PROD_SERVER%" bash "%PROD_BASE_DIR%/relink_prod_jar.sh" "%JAR_BASENAME%" "%PROD_APP_DIR%" "%PROD_BASE_DIR%" "%PROD_LINK_NAME%"
 if %ERRORLEVEL% EQU 0 (
     echo Application start command executed.
 ) else (
