@@ -1,8 +1,10 @@
 package com.xaan.demo.config;
 
 import com.xaan.vault.crypto.envelope.DekProvider;
+import com.xaan.vault.crypto.envelope.DekRotationSupport;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
 import com.xaan.vault.crypto.envelope.KekProvider;
+import com.xaan.vault.crypto.envelope.KekRotationSupport;
 import com.xaan.vault.crypto.envelope.KekService;
 import com.xaan.vault.crypto.envelope.VaultDekProvider;
 import com.xaan.vault.crypto.envelope.VaultKekProvider;
@@ -52,5 +54,15 @@ public class CryptoConfig {
     @Bean
     public EnvelopeCryptoService userPiiCryptoService(KekService kekService, DekProvider dekProvider) {
         return EnvelopeCryptoService.forDomain(USER_PII_DOMAIN_CODE, "user-pii", kekService, dekProvider);
+    }
+
+    @Bean
+    public DekRotationSupport dekRotationSupport(KekService kekService, DekProvider dekProvider) {
+        return new DekRotationSupport(kekService, dekProvider);
+    }
+
+    @Bean
+    public KekRotationSupport kekRotationSupport(KekProvider kekProvider) {
+        return new KekRotationSupport(kekProvider);
     }
 }

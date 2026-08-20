@@ -96,7 +96,7 @@ spring.cloud.vault.fail-fast=false
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design and `bootstrap_kek_dek.py` for how these secrets are generated
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.6`) provides KEK-DEK envelope encryption
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.7`) provides KEK-DEK envelope encryption
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`); each unwraps its DEK from Vault once at startup and caches it in memory
 3. `PasswordService` delegates to the domain-specific `EnvelopeCryptoService` for encrypt/decrypt/validate — no legacy fallback, no Vault call per request
 4. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB
@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.6.jar
+   java -jar build/libs/xaandemo-0.0.9.jar
    ```
 
 3. **Access the application:**
@@ -219,7 +219,7 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 개인정보**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: `PasswordService.java` uses domain-scoped `EnvelopeCryptoService` (via `CryptoConfig`) + `BCryptPasswordEncoder`
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음)
-   - Package: `com.xaan:vault-crypto:0.0.6`
+   - Package: `com.xaan:vault-crypto:0.0.7`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
 
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.6.jar app.jar
+COPY build/libs/xaandemo-0.0.9.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.6.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.6.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.9.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.9.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,37 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.9 (2026-08-20)
+
+**Removed the `both` DEK-ops mode; guarded against combining rotate+reencrypt in one run.** A real production test hit this exact footgun: `EnvelopeCryptoService` reads Vault's current DEK version once when the bean is built, before `DekOpsRunner` ever runs, so a reencrypt requested in the same JVM run as a rotate would still see the pre-rotation version - it would silently do nothing useful instead of migrating rows to the version just created.
+
+**Changes:**
+- `dek_ops_batch.bat`: removed the `both` mode entirely (only `rotate <domain>` and `reencrypt <domains>` remain)
+- `DekOpsRunner.run()` now throws `IllegalStateException` immediately if both `app.dek-ops.rotate-domain` and `app.dek-ops.reencrypt-domains` are set at once, regardless of invocation path (restart-based env vars or batch mode) - fails loudly instead of running something that looks like it worked but didn't
+- Rotate and reencrypt must always be two separate runs: rotate, let it finish, then start a fresh run for reencrypt
+
+### v0.0.8 (2026-08-20)
+
+**Fix: DEK reencryption batch mis-reported legacy-format rows as failures** - a real production run against ~2M board rows logged 46,266 `ERROR`s (`Envelope domain mismatch`, `No DEK version ... loaded`), all from pre-KEK-DEK legacy-format ciphertext that has no `domainCode`/`keyVersion` header at all (deliberately left unmigrated per the 2026-08-19 decision) - reading one produces effectively random header bytes, so `decrypt()` correctly rejects them, but `DekReencryptionService` was counting that as `failed` instead of recognizing it as "not our format, leave alone."
+
+**Changes:**
+- `DekReencryptionService` now catches `CryptoException` specifically and counts it under a new `notEnvelopeFormat` result field instead of `failed`, without logging one line per row (avoids tens of thousands of log lines for a known, permanent, expected condition)
+- `failed` is now reserved for genuinely unexpected `RuntimeException`s, still logged per-row for investigation
+- `DekOpsRunner`'s log line now reports all four counts: `migrated`, `skipped`, `notEnvelopeFormat`, `failed`
+
+### v0.0.7 (2026-08-20)
+
+**DEK Rotation Tooling** - the command-level piece the rotation runbook's step 4 ("점진적 재암호화") previously only described in prose.
+
+**Changes:**
+- `vault-crypto`: added `EnvelopeCryptoService.currentVersion()` and `versionOf(String)` (reads a ciphertext's `keyVersion` header without decrypting), so a reencryption batch can cheaply skip rows already on the current DEK version instead of rewriting every row unconditionally
+- `CryptoConfig`: added `DekRotationSupport` and `KekRotationSupport` beans (previously unused library classes with no wiring in the app)
+- Added `DekReencryptionService` (`reencryptBoardPasswords()` / `reencryptUserPii()`) and `DekOpsRunner`, a one-shot `ApplicationRunner` gated by two env vars:
+  - `ROTATE_DEK_DOMAIN=board` — issue a new DEK version for that domain (old version stays valid for decrypt)
+  - `REENCRYPT_DEK_DOMAINS=board,user-pii` — after confirming the app picked up the new version, backfill existing rows onto it
+- Both are meant to be set for a single deploy, confirm the logged migrated/skipped/failed counts, then unset before the next deploy - same one-shot pattern as the earlier (now-removed) legacy-format migration switch
+- **Standalone manual batch mode**: the switches above run inline during a normal server startup, which the user pointed out isn't fully isolated from live traffic. Added `app.dek-ops.batch-mode` - when true, `DekOpsRunner` calls `System.exit(SpringApplication.exit(...))` after finishing instead of continuing on to start the server. `dek_ops_batch.sh` launches the jar with this plus `--spring.main.web-application-type=none` (the JVM never opens the web port at all), and `dek_ops_batch.bat` uploads/runs it against the production server's `xaandemo-prod.jar` over ssh - a genuinely separate, on-demand batch run rather than something tied to a server restart
 
 ### v0.0.6 (2026-08-20)
 
@@ -316,7 +347,7 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 **Dependencies:**
 ```groovy
-implementation 'com.xaan:vault-crypto:0.0.6'          // KEK-DEK 봉투 암호화
+implementation 'com.xaan:vault-crypto:0.0.7'          // KEK-DEK 봉투 암호화
 implementation 'org.springframework.security:spring-security-crypto' // BCrypt
 implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 ```
