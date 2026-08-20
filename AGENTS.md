@@ -1,6 +1,6 @@
 # demoApp - Project Knowledge
 
-## Critical Information (Last Updated: 2026-08-19)
+## Critical Information (Last Updated: 2026-08-20)
 
 ### Vault Configuration (Updated 2026-05-08)
 - **Server**: `http://192.168.2.57:8200`
@@ -28,7 +28,8 @@
 - **Migration abandoned (2026-08-19)**: The `users` table will be dropped entirely, and existing `board.password` ciphertext is being left as-is rather than migrated. All legacy-format decrypt fallback and the P3 backfill migration code have been removed — `PasswordService` and `CryptoConfig` no longer reference the old `VaultCryptoService` at all. Decrypting/validating pre-existing ciphertext with the new code now fails cleanly (`CryptoException` / `false`) instead of falling back.
 - **`VaultCryptoService` deleted (2026-08-19, vault-crypto v0.0.3)**: the old single-key class itself was removed from the vault-crypto library (not just deprecated) — any other project still using it is being ignored per the user's decision. vault-crypto's only public API now is the `envelope` package.
 - **Code status (2026-08-19)**: P0-P2 all done. **P0 confirmed complete**: the user ran `bootstrap_kek_dek.py`'s output against the production Vault (`ebiz_service/data/ebiz_db/kek`, `.../dek/board`, `.../dek/user-pii`) with no errors; a subsequent `gradle test` run showed `DemoApplicationTests.contextLoads()` failing on a Postgres connection error rather than `KeyLoadingException`, confirming the KEK/DEK load successfully now. P1 (vault-crypto `envelope` package, single-key class removed) and P2 (demoApp wiring, legacy-free) are implemented, build, and pass tests.
-- **Package/version**: `com.xaan:vault-crypto:0.0.5` (bumped `0.0.1 → 0.0.2 → 0.0.3 → 0.0.5`, published to `mavenLocal`; demoApp itself bumped `0.0.4 → 0.0.5` to match)
+- **KEK rotation support added (2026-08-20, P5)**: the original `KekService` held a single flat KEK with no version concept - rotating it in Vault would have broken every domain's DEK unwrap at once (total outage). `KekService` was rewritten to hold every loaded KEK version (same pattern as `DomainKeyRing`), and wrapped-DEK bytes now carry a `kekVersion` header so `unwrap()` picks the right version. Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault, versioned like DEKs) and `KekRotationSupport` (issue a new KEK version, then re-wrap a domain's DEKs under it). Added `retire(...)` to both `DekProvider` and `KekProvider`. **Breaking**: the wrapped-DEK format changed (adds a 1-byte version prefix), so the KEK/DEK secrets from P0 had to be regenerated via the updated `bootstrap_kek_dek.py`. **Done**: the user re-ran it against the production Vault on 2026-08-20 and confirmed no errors - the production `kek`/`dek/board`/`dek/user-pii` secrets are now in the v0.0.6 versioned format. Full rotation procedure (both KEK and DEK) with sequence-diagram procedure diagrams: `KEY_ROTATION_RUNBOOK.md`.
+- **Package/version**: `com.xaan:vault-crypto:0.0.6` (bumped `0.0.1 → 0.0.2 → 0.0.3 → 0.0.5 → 0.0.6`, published to `mavenLocal`; demoApp itself bumped `0.0.4 → 0.0.5 → 0.0.6` to match)
 
 ### Production Deployment
 - **Server**: `192.168.2.57`
@@ -36,7 +37,7 @@
 - **App Path**: `/home/xaan/ws/demoBBS/app`
 - **Log Path**: `/home/xaan/ws/demoBBS/log`
 - **Deploy Script**: `./deploy.sh` (builds with Java 17, deploys JAR, restarts app)
-- **JAR Name**: `xaandemo-0.0.5.jar`
+- **JAR Name**: `xaandemo-0.0.6.jar`
 - **App URL**: `http://192.168.2.57:8080`
 
 ### Database
@@ -45,7 +46,7 @@
 - **Schema**: `ebiz`
 - **Table**: `ebiz.board`
 - **User**: `postgres`
-- **Password**: `REDACTED_DB_PASSWORD`
+- **Password**: `${DB_PASSWORD}` (stored in `application.properties`, which is in `.gitignore` — never put the real value here)
 
 ### API Endpoints
 - **REST API**: `/api/v1/posts` (GET by ID, POST create, PUT update)
@@ -75,6 +76,19 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 ### Build Scripts
 - **build-with-env.sh**: Sets JAVA_HOME automatically
 - **deploy.sh**: Builds with Java 17 and deploys to production
+
+### Recent Changes (2026-08-20)
+1. User asked what to consider when rotating the KEK. Analysis surfaced a real gap: `KekService` held exactly one flat KEK with no versioning, so swapping the `kek` value in Vault would make every domain's `unwrap()` fail simultaneously (GCM auth failure) - a full outage, unlike DEK rotation which degrades gracefully because ciphertext already carries a `keyVersion` header.
+2. **vault-crypto (v0.0.5 → v0.0.6)**: rewrote `KekService` to hold every loaded KEK version (mirrors `DomainKeyRing`'s pattern exactly); wrapped-DEK bytes are now self-describing (`kekVersion(1B) | IV | ciphertext+tag`), so `unwrap()` dispatches to the right KEK version even after a rotation. Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault KV-v2, versioned via `kek-v{n}` + `current-version`, mirroring `VaultDekProvider`) and `KekRotationSupport` (`issueNewKekVersion()` + `rewrapDomainDeks(...)`, which re-wraps a domain's DEKs without touching any actual data). Added `retire(...)` to both `DekProvider`/`VaultDekProvider` and the new `KekProvider`/`VaultKekProvider` (refuses to retire the current version). Added `KekRotationTest` (5 tests) and fixed `EnvelopeCryptoServiceTest`'s in-memory `DekProvider` test double (now needs `retire()`, and `store()` now correctly overwrites by version instead of appending duplicates). All 9 vault-crypto tests pass.
+3. **demoApp**: updated `CryptoConfig` to wire `VaultKekProvider` + `KekService.load(kekProvider)` instead of the old direct-Vault `KekService` constructor (which was removed). Fixed `PasswordServiceTest`'s in-memory `DekProvider` test double to implement the new `retire()` method. Bumped `vault-crypto` dependency and demoApp's own version `0.0.5 → 0.0.6` everywhere (`build.gradle` both projects, `deploy.sh`, `deploy.bat`, both `README.md` files with new `v0.0.6` Release History entries, this file).
+4. Updated `bootstrap_kek_dek.py` to write the new versioned KEK format (`kek-v1` + `current-version` instead of a bare `kek` field) and to prepend the `kekVersion` byte when wrapping DEKs. **This is a breaking format change** - the KEK/DEK secrets created for P0 (v0.0.5-era format) no longer worked with v0.0.6. The user re-ran the updated script's output against the production Vault and confirmed it completed without errors (asked first whether the old KEK value itself could be reused - answer: technically yes, but pointless here since the old DEKs' plaintext was never persisted and nothing had been deployed yet, so regenerating everything together was simplest).
+5. Wrote `KEY_ROTATION_RUNBOOK.md`: a detailed, step-by-step procedure for both DEK rotation and KEK rotation, each with a Mermaid `sequenceDiagram` showing the operator/app/Vault/DB interaction over time, plus checklists, rollback scenarios (safe to abort any time before `retire()` is called; `retire()` itself is not reversible), and rotation-trigger guidance (periodic policy, suspected compromise, access changes).
+6. Generated a PPTX version of the two rotation procedure diagrams (native editable shapes via `python-pptx`, installed into `my_env`) at the user's request ("가능하면 pptx 형식으로도"). See file reference below.
+7. Updated `KEK_DEK_ENCRYPTION_PLAN.md`: P5 marked done for the core rotation capability (an admin trigger endpoint/CLI is still optional and not yet built), added a note explaining the KEK-versioning gap and how it was closed, linked to the new runbook.
+8. **`deploy.sh`/`deploy.bat` switched to symlink-based releases** (user's request): previously the remote step just `cp`'d the newly uploaded versioned jar over a single `xaandemo-prod.jar` file. Now each versioned jar (`xaandemo-<version>.jar`) is kept under `PROD_APP_DIR`, and `${PROD_BASE_DIR}/xaandemo-prod.jar` is a symlink that gets `rm -f` + `ln -s`'d to point at the new version - but only when the version actually changed (compares `readlink -f` of the existing link against the new jar's path first). This also means a rollback is just re-linking to an older versioned jar, no re-deploy needed. In `deploy.sh` this runs inside a `bash -s --`-parameterized heredoc (positional args, so nothing is expanded by the local shell); `deploy.bat`'s remote command is a single quoted ssh argument, so it uses the `x$VAR != x$OTHER` idiom to avoid needing nested double quotes. Also fixed the process-wait `pgrep` pattern in `deploy.sh` to match `xaandemo-prod.jar` (the stable name the process is actually launched with) instead of a hardcoded version string that would never match. `bash -n deploy.sh` confirms it still parses; the batch file has no local syntax checker available, so it hasn't been executed, only re-read carefully.
+9. **Fixed: `deploy.bat` wasn't actually relinking `xaandemo-prod.jar`** — the user ran it and reported the symlink was still pointing at the old version after a successful-looking deploy. Root cause: the wait/relink/start logic for Step 3 was embedded as one big cmd.exe-double-quoted ssh argument containing bash syntax (`$(...)`, `[ ... ]`, redirects) - too fragile to verify without live Windows testing, and it evidently didn't execute as intended. Fixed by extracting that logic into a new standalone `relink_prod_jar.sh`, which `deploy.sh`/`deploy.bat` now `scp` to the server (right after the jar) and invoke with plain, separately-quoted arguments (`ssh ... bash relink_prod_jar.sh "$JAR_BASENAME" "$PROD_APP_DIR" "$PROD_BASE_DIR" "$PROD_LINK_NAME"`) - no embedded shell syntax left to mis-quote on either platform, and both scripts now share one source of truth for the remote logic instead of two hand-kept-in-sync copies. `bash -n` confirms both `deploy.sh` and `relink_prod_jar.sh` parse; **not yet re-verified against the actual server** - ask the user to re-run `deploy.bat` and check `ls -la` on `xaandemo-prod.jar` afterward.
+10. **Fixed a `pgrep` self-match bug in `relink_prod_jar.sh`**: `pgrep -f "$LINK_NAME"` (searching for `xaandemo-prod.jar`) matched the script's *own* invocation too, since `xaandemo-prod.jar` is passed to it as `$4` and shows up in its own command line (`bash relink_prod_jar.sh ... xaandemo-prod.jar`) - so the "wait for the old process to stop" loop always found a match (itself) and would never exit, per the user's report. Fixed by requiring `java` ahead of the jar name in the pattern (`pgrep -f "java.*${LINK_NAME}"`), which only matches the actual running JVM process, not the relink script's own shell invocation. Not yet re-verified against the real server.
+11. Nothing was committed to git this session.
 
 ### Recent Changes (2026-08-19)
 1. Analyzed the existing encryption structure (single flat Vault key shared by `board.password` and `users.id_no`) and wrote `KEK_DEK_ENCRYPTION_PLAN.md` — a KEK-DEK envelope encryption design + phased implementation plan (P0-P5).
@@ -113,12 +127,14 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 
 ### File References
 - **Vault/Encryption Docs**: `VAULT_AND_ENCRYPTION.md`
-- **KEK-DEK Envelope Encryption Plan**: `KEK_DEK_ENCRYPTION_PLAN.md` (design + phased plan; P3 data migration cancelled 2026-08-19)
+- **KEK-DEK Envelope Encryption Plan**: `KEK_DEK_ENCRYPTION_PLAN.md` (design + phased plan; P3 data migration cancelled 2026-08-19; P5 rotation core done 2026-08-20)
+- **Key Rotation Runbook**: `KEY_ROTATION_RUNBOOK.md` (step-by-step KEK/DEK rotation procedures with Mermaid sequence diagrams, checklists, rollback scenarios; added 2026-08-20)
+- **Rotation Procedure Slides**: `KEY_ROTATION_RUNBOOK.pptx` (generated from the runbook's two procedure diagrams via `python-pptx`; not tracked in git, regenerate locally if needed - see the generator note in this file's 2026-08-20 changes)
 - **Main Config**: `src/main/resources/application.properties`
-- **Crypto Wiring**: `src/main/java/com/xaan/demo/config/CryptoConfig.java` (KEK/DEK/domain `EnvelopeCryptoService` beans only, no legacy bean)
+- **Crypto Wiring**: `src/main/java/com/xaan/demo/config/CryptoConfig.java` (KEK/DEK/domain `EnvelopeCryptoService` beans only, no legacy bean; wires `VaultKekProvider` + `KekService.load(...)` since v0.0.6)
 - **Password Service**: `src/main/java/com/xaan/demo/service/PasswordService.java` (uses vault-crypto envelope services only, no legacy fallback)
 - **Board Service**: `src/main/java/com/xaan/demo/service/BoardService.java`
 - **Deploy Script**: `deploy.sh`
 - **Python Decryption Script**: `decrypt_passwords.py` (tested 2026-05-08; note it still decodes the old single-key format, now unrelated to how the app encrypts)
-- **P0 Bootstrap Script**: `bootstrap_kek_dek.py` (generates KEK/DEK and prints `vault kv put` commands; does not touch Vault itself)
-- **vault-crypto Package**: `/c/Temp/ag-projects/vault-crypto/` (now at v0.0.5; envelope package added 2026-08-15, `VaultCryptoService` deleted 2026-08-19 — `envelope` is now the only public API)
+- **P0 Bootstrap Script**: `bootstrap_kek_dek.py` (generates versioned KEK/DEK and prints `vault kv put` commands; does not touch Vault itself; updated 2026-08-20 for the v0.0.6 wrap format - must be re-run against production Vault)
+- **vault-crypto Package**: `/c/Temp/ag-projects/vault-crypto/` (now at v0.0.6; envelope package added 2026-08-15, `VaultCryptoService` deleted 2026-08-19, KEK versioning + rotation support added 2026-08-20 — `envelope` is now the only public API)

@@ -93,5 +93,13 @@ class PasswordServiceTest {
             versionsByDomain.computeIfAbsent(domain, d -> new ArrayList<>()).add(newVersion);
             currentVersionByDomain.put(domain, newCurrentVersion);
         }
+
+        @Override
+        public void retire(String domain, int version) {
+            List<WrappedDek> versions = versionsByDomain.get(domain);
+            if (versions != null) {
+                versions.removeIf(wrapped -> wrapped.version() == version);
+            }
+        }
     }
 }

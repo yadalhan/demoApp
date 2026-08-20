@@ -129,22 +129,24 @@ Base64URL( domainCode(1B) | keyVersion(1B) | IV(12B) | ciphertext + tag(16B) )
 
 | Phase | 상태 | 작업 내용 | 산출물 |
 |---|---|---|---|
-| **P0. Vault 준비** | ✅ **완료 (2026-08-19)** | KEK용 신규 경로 생성(`.../kek`), 도메인별 DEK 생성 후 KEK로 wrap하여 `.../dek/board`, `.../dek/user-pii`에 저장. 기존 `data-enc-key` 경로는 더 이상 필요 없음(마이그레이션 자체를 포기했으므로 유지할 이유 없음 — 삭제는 선택 사항) | `bootstrap_kek_dek.py`로 생성한 명령어를 사용자가 직접 프로덕션 Vault에 실행, 에러 없음. `gradle test` 결과 `KeyLoadingException` 대신 Postgres 연결 오류만 발생해 KEK/DEK 로드가 정상 동작함을 간접 확인 |
+| **P0. Vault 준비** | ✅ **완료, v0.0.6 포맷으로 재실행 완료 (2026-08-20)** | KEK용 신규 경로 생성(`.../kek`), 도메인별 DEK 생성 후 KEK로 wrap하여 `.../dek/board`, `.../dek/user-pii`에 저장. 기존 `data-enc-key` 경로는 더 이상 필요 없음(마이그레이션 자체를 포기했으므로 유지할 이유 없음 — 삭제는 선택 사항) | 최초 실행은 2026-08-19(구 포맷, `kek` 단일 필드). v0.0.6에서 wrapped DEK 포맷이 바뀌면서(`kekVersion` 헤더 추가, KEK도 `kek-v1`+`current-version` 구조로 변경) 옛 시크릿이 호환되지 않게 되어, 갱신된 `bootstrap_kek_dek.py`로 2026-08-20에 재실행 — 사용자가 직접 프로덕션 Vault에 반영, 문제없이 완료 확인 |
 | **P1. vault-crypto 라이브러리 확장** | ✅ 완료 | `envelope` 패키지 신설(3.1절 클래스들), 암호문 포맷에 `domainCode`+`keyVersion` 헤더 추가, 유닛테스트(wrap/unwrap 라운드트립, 도메인 격리, 버전 디스패치) | `vault-crypto:0.0.2`로 버전업 후 `mavenLocal`에 publish 완료. `AesGcmCodec`, `KekService`, `WrappedDek`, `DekProvider`/`VaultDekProvider`, `DomainKeyRing`, `EnvelopeCryptoService`, `DekRotationSupport` 및 `EnvelopeCryptoServiceTest`(4개 테스트, 전부 통과) |
 | **P2. demoApp 배선** | ✅ 완료 | `CryptoConfig` 추가, `PasswordService`/`UserService`를 도메인별 서비스로 전환, RRN 메서드 네이밍 정리(`encryptBoardPassword` 재사용 → `encryptUserPii` 신설) | `CryptoConfig.java`(KEK/DEK/도메인별 `EnvelopeCryptoService` 빈만 존재, 레거시 빈 없음), `PasswordService`가 board/user-pii 도메인 서비스만 사용하도록 리팩터링(레거시 폴백 없음). `PasswordServiceTest` 갱신(구 포맷 암호문은 예외/`false`로 처리됨을 검증하는 테스트 포함, 3개 전부 통과) |
 | ~~P3. 기존 데이터 마이그레이션~~ | ❌ **취소 (2026-08-19)** | ~~기존 `board.password`, `users.id_no` 값을 레거시 포맷으로 복호화 → 새 봉투 포맷으로 재암호화~~ — `users` 테이블은 통째로 삭제 예정이고 `board.password`의 기존 암호화 데이터는 그대로 무시하기로 결정. `EnvelopeMigrationService`/`EnvelopeMigrationRunner`와 관련 설정(`app.migration.envelope-encryption.enabled`)을 모두 삭제함 | (삭제됨) |
-| **P4. 정리** | ✅ 완료 | 레거시 호환 코드 제거(`PasswordService`/`CryptoConfig`에서 `VaultCryptoService` 참조 제거) + vault-crypto 라이브러리에서 `VaultCryptoService` 클래스 자체 삭제(v0.0.3, breaking change, 기존 소비 프로젝트 무시하기로 결정). 남은 것: `VAULT_AND_ENCRYPTION.md` 등 구 문서 갱신, 로테이션 런북 작성 | vault-crypto `v0.0.3` — `VaultCryptoService.java` 삭제, README를 `EnvelopeCryptoService` 중심으로 재작성 |
-| **P5. (선택) 로테이션 자동화** | 대기 | 관리자 엔드포인트/CLI로 도메인별 DEK 로테이션 트리거 → 신규 버전 발급 + 백그라운드 재암호화 잡 | `DekRotationSupport`(vault-crypto)는 이미 준비됨 — demoApp 쪽 트리거만 남음 |
+| **P4. 정리** | ✅ 완료 | 레거시 호환 코드 제거(`PasswordService`/`CryptoConfig`에서 `VaultCryptoService` 참조 제거) + vault-crypto 라이브러리에서 `VaultCryptoService` 클래스 자체 삭제(v0.0.3, breaking change, 기존 소비 프로젝트 무시하기로 결정). 남은 것: `VAULT_AND_ENCRYPTION.md` 등 구 문서 갱신 | vault-crypto `v0.0.3` — `VaultCryptoService.java` 삭제, README를 `EnvelopeCryptoService` 중심으로 재작성 |
+| **P5. 로테이션 지원** | ✅ **핵심 기능 완료 (2026-08-20)**, 관리자 트리거 UI는 대기 | KEK 자체를 버전 관리(이전에는 KEK가 단일 값이라 로테이션 시 전체 장애 위험이 있었음 — 5절 참고) + DEK/KEK 재wrap 유틸 + 절차 문서화 | vault-crypto `v0.0.6` — `KekService` 버전 인식형으로 재작성, `KekProvider`/`VaultKekProvider`/`KekRotationSupport` 추가, `DekProvider`/`KekProvider`에 `retire(...)` 추가. 상세 절차 + 절차도: `KEY_ROTATION_RUNBOOK.md`. 관리자 엔드포인트/CLI로 이 유틸들을 트리거하는 부분만 아직 미구현(필요 시 런북의 "사전 준비" 절 참고해 임시 러너로 실행) |
 
 > **버전 정렬 (2026-08-19)**: 위 표의 `vault-crypto:0.0.2`/`v0.0.3`은 각 단계가 실제로 완료된 시점의 버전을 기록한 것이다. 이후 사용자 요청으로 demoApp(`0.0.4 → 0.0.5`)과 vault-crypto(`0.0.3 → 0.0.5`, `0.0.4`는 건너뜀)의 버전 번호를 `0.0.5`로 통일했다 — 기능 변경은 없으며, 두 프로젝트 릴리스 번호를 맞추기 위한 순수 버전업이다. `build.gradle`(양쪽), `deploy.sh`/`deploy.bat`, 각 프로젝트 `README.md`에 반영 완료.
 
-### 4.1 로테이션 동작 흐름 (P5 대비 설계 근거)
+### 4.1 로테이션 동작 흐름 (P5, 2026-08-20 구현 완료)
 1. 신규 DEK(32바이트) 생성 → 현재 KEK로 wrap → Vault에 `version+1`로 저장
 2. 앱은 재기동(또는 갱신 트리거) 시 신규 버전을 `DomainKeyRing`에 추가 로드 — **기존 버전은 유지**(복호화용)
 3. 신규 `encrypt()` 호출부터는 최신 버전 DEK 사용
 4. 백그라운드 배치가 구버전으로 암호화된 행을 읽어 재암호화 → 최신 버전으로 수렴
-5. 구버전 데이터가 0건이 되면 다음 배포에서 `DomainKeyRing`에서 구버전 제거
+5. 구버전 데이터가 0건이 되면 `DekProvider.retire(domain, oldVersion)`으로 Vault에서 제거
 6. KEK 로테이션은 DEK 재wrap만 필요(데이터 재암호화 불필요) — 이것이 봉투 암호화의 핵심 이점이며, 지금처럼 데이터 컬럼이 늘어나도 KEK 로테이션 비용은 "도메인 수"에만 비례한다.
+
+**KEK 로테이션 시 중요한 전제(2026-08-19에 발견한 갭, 2026-08-20에 해소)**: 원래 `KekService`는 KEK 하나만 평문으로 들고 있어서 버전 개념이 없었다 — 이 상태로 Vault의 `kek` 값을 바꾸면 모든 도메인의 모든 DEK가 동시에 unwrap 실패해 전체 장애로 이어졌다. `KekService`를 `DomainKeyRing`과 동일한 패턴(여러 버전을 메모리에 보관, wrapped DEK에 `kekVersion` 헤더를 내장)으로 재작성하고, `KekProvider`/`VaultKekProvider`/`KekRotationSupport`를 추가해 "신규 KEK 발급 → 도메인별 DEK 재wrap → 검증 → 구버전 폐기"를 안전하게 나눠서 수행할 수 있게 했다. 두 로테이션의 상세 절차와 절차도(시퀀스 다이어그램)는 `KEY_ROTATION_RUNBOOK.md`에 정리했다.
 
 ---
 
@@ -159,4 +161,4 @@ Base64URL( domainCode(1B) | keyVersion(1B) | IV(12B) | ciphertext + tag(16B) )
 ## 6. 요약
 - 현재는 KEK/DEK 구분이 없는 **단일 평문 키** 구조이며, 도메인 간 키 공유 + 로테이션 불가 + 버전 정보 부재가 핵심 갭이다.
 - 목표는 **Vault의 KEK가 도메인별 DEK를 wrap**하고, **각 도메인 DEK는 앱 기동 시 1회 unwrap되어 메모리에 캐시**되는 구조로, 지금과 동일하게 "DML 시점에는 Vault 호출 없음"이라는 성능 특성을 유지하면서 키를 분리한다.
-- 구현은 vault-crypto 라이브러리 확장(P1) → demoApp 배선(P2) 순으로 진행했고, **기존 암호화 데이터 마이그레이션(P3)과 구 포맷 하위호환은 2026-08-19 결정으로 포기**했다(`users` 테이블 삭제 예정, `board`의 기존 암호화 데이터는 무시). 남은 것은 P0(Vault에 KEK/DEK 실제 생성)와 필요 시 P5(로테이션 자동화)뿐이다.
+- 구현은 vault-crypto 라이브러리 확장(P1) → demoApp 배선(P2) 순으로 진행했고, **기존 암호화 데이터 마이그레이션(P3)과 구 포맷 하위호환은 2026-08-19 결정으로 포기**했다(`users` 테이블 삭제 예정, `board`의 기존 암호화 데이터는 무시). P0(Vault에 KEK/DEK 실제 생성)와 P5의 핵심 로테이션 기능(KEK 버전 관리, `KekRotationSupport`, 런북)까지 2026-08-20 기준 완료됐다. 남은 건 로테이션을 트리거하는 관리자 UI/CLI(선택 사항)뿐이다.

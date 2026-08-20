@@ -96,7 +96,7 @@ spring.cloud.vault.fail-fast=false
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design and `bootstrap_kek_dek.py` for how these secrets are generated
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.5`) provides KEK-DEK envelope encryption
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.6`) provides KEK-DEK envelope encryption
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`); each unwraps its DEK from Vault once at startup and caches it in memory
 3. `PasswordService` delegates to the domain-specific `EnvelopeCryptoService` for encrypt/decrypt/validate — no legacy fallback, no Vault call per request
 4. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB
@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.5.jar
+   java -jar build/libs/xaandemo-0.0.6.jar
    ```
 
 3. **Access the application:**
@@ -219,7 +219,7 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 개인정보**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: `PasswordService.java` uses domain-scoped `EnvelopeCryptoService` (via `CryptoConfig`) + `BCryptPasswordEncoder`
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음)
-   - Package: `com.xaan:vault-crypto:0.0.5`
+   - Package: `com.xaan:vault-crypto:0.0.6`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
 
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.5.jar app.jar
+COPY build/libs/xaandemo-0.0.6.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.5.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.5.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.6.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.6.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -287,6 +287,19 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 ## Release History
 
+### v0.0.6 (2026-08-20)
+
+**KEK Rotation Support** - the KEK itself is now versioned, closing the gap where rotating it would have broken every domain's DEK at once.
+
+**Changes:**
+- `vault-crypto`: `KekService` rewritten to hold every loaded KEK version (like `DomainKeyRing` does for DEKs); wrapped-DEK bytes are now self-describing (`kekVersion(1B) | IV | ciphertext+tag`), so `unwrap()` picks the right KEK version even after a rotation
+- Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault, versioned exactly like `DekProvider`/`VaultDekProvider`) and `KekRotationSupport` (issue a new KEK version, then re-wrap a domain's DEKs under it)
+- Added `retire(...)` to `DekProvider`/`VaultDekProvider` and `KekProvider`/`VaultKekProvider` for permanently removing a version once nothing depends on it
+- `bootstrap_kek_dek.py` updated to write the new versioned KEK format
+- Detailed KEK/DEK rotation runbook with procedure diagrams: [KEY_ROTATION_RUNBOOK.md](KEY_ROTATION_RUNBOOK.md)
+- **Breaking**: the wrapped-DEK format changed (adds a version-prefix byte) - the KEK/DEK secrets created for v0.0.5 must be regenerated via the updated `bootstrap_kek_dek.py` before the app can start
+- `vault-crypto` `0.0.5 → 0.0.6`, demoApp `0.0.5 → 0.0.6`
+
 ### v0.0.5 (2026-08-19)
 
 **KEK-DEK Envelope Encryption** - `vault-crypto`의 단일 평문 키 방식을 Vault KEK가 도메인별 DEK를 wrap하는 봉투 암호화 모델로 전환.
@@ -303,7 +316,7 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 **Dependencies:**
 ```groovy
-implementation 'com.xaan:vault-crypto:0.0.5'          // KEK-DEK 봉투 암호화
+implementation 'com.xaan:vault-crypto:0.0.6'          // KEK-DEK 봉투 암호화
 implementation 'org.springframework.security:spring-security-crypto' // BCrypt
 implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 ```
