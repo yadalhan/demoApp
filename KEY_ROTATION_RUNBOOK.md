@@ -1,6 +1,8 @@
 # KEK / DEK 키 로테이션 런북
 
-`KEK_DEK_ENCRYPTION_PLAN.md`에서 설계한 KEK-DEK 봉투 암호화 모델(vault-crypto `0.0.6` 기준)에서, KEK와 DEK를 각각 실제로 교체(로테이션)할 때 따라야 할 절차를 정리한다. 코드 근거는 `vault-crypto`의 `com.xaan.vault.crypto.envelope` 패키지(`KekService`, `KekProvider`/`VaultKekProvider`, `KekRotationSupport`, `DekProvider`/`VaultDekProvider`, `DekRotationSupport`, `DomainKeyRing`, `EnvelopeCryptoService`)이다.
+`KEK_DEK_ENCRYPTION_PLAN.md`에서 설계한 KEK-DEK 봉투 암호화 모델(vault-crypto `0.0.7`, demoApp `0.0.9` 기준)에서, KEK와 DEK를 각각 실제로 교체(로테이션)할 때 따라야 할 절차를 정리한다. 코드 근거는 `vault-crypto`의 `com.xaan.vault.crypto.envelope` 패키지(`KekService`, `KekProvider`/`VaultKekProvider`, `KekRotationSupport`, `DekProvider`/`VaultDekProvider`, `DekRotationSupport`, `DomainKeyRing`, `EnvelopeCryptoService`)와 demoApp의 `DekOpsRunner`/`DekReencryptionService`/`dek_ops_batch.sh`/`dek_ops_batch.bat`(2026-08-20에 구현, 운영 환경에서 board/user-pii 두 도메인 모두 실제 검증 완료)다.
+
+> **DEK 로테이션 절차는 2026-08-20에 운영 서버에서 실제로 실행해 검증했다** (아래 §2). 그 과정에서 발견/수정한 것들: (1) 레거시(구 단일 키) 포맷 행을 재암호화 실패로 잘못 집계하던 버그, (2) `dek_ops_batch.bat`가 ssh로 빈 문자열 인자를 넘길 때 뒤 인자가 앞으로 밀리며 `reencrypt`가 `rotate`로 둔갑하던 버그(`-` sentinel로 해결), (3) **rotate와 reencrypt를 같은 실행에서 함께 하면 안 된다는 것** — 아래 경고 참고. KEK 로테이션(§3)은 아직 실제로 실행해보지 않았다(코드/절차만 준비됨).
 
 ---
 
@@ -28,7 +30,11 @@ Vault의 dek-v{n} 필드(KekService):          kekVersion(1B) | IV | ciphertext 
 - **Vault 접근**: `VAULT_ADDR`(운영은 `http://192.168.2.57:8200`), `VAULT_TOKEN` 환경변수 설정. `production-infra-manual-execution` 원칙에 따라 운영 Vault에 쓰는 명령은 항상 운영자가 직접 실행한다.
 - **백업**: kv-v2는 자체적으로 시크릿 버전 이력을 남기지만(`vault kv get -version=N ...`), 로테이션 직전에 `vault kv get`으로 현재 값을 별도로 기록해 두면 대조가 쉽다.
 - **동시 실행 방지**: 이 문서의 절차는 한 번에 한 명의 운영자가 순서대로 진행한다고 가정한다. `VaultDekProvider.store()`/`VaultKekProvider.store()`는 "전체 읽기 → 병합 → 전체 쓰기" 방식이라 동시에 두 곳에서 쓰면 한쪽이 유실될 수 있다.
-- **트리거 방식**: 이 런북의 각 단계는 `DekRotationSupport`/`KekRotationSupport`를 호출하는 관리자 도구(임시 배치 클래스, 관리자 전용 엔드포인트, 또는 별도 커맨드라인 러너)를 통해 실행한다고 가정한다. demoApp에는 아직 상시 관리자 엔드포인트가 없으므로, 로테이션 시점에 임시로 `ApplicationRunner` 형태로 실행 후 제거하는 방식(P3 백필 때 썼던 `app.migration.envelope-encryption.enabled` 패턴 참고)을 권장한다.
+- **트리거 방식 (2026-08-20 기준 구현 완료, 운영 검증됨)**: DEK 로테이션/재암호화는 `DekOpsRunner`가 담당하며, 두 가지 방식으로 실행할 수 있다.
+  1. **평소 배포에 끼워서**: `ROTATE_DEK_DOMAIN`/`REENCRYPT_DEK_DOMAINS` 환경변수를 설정하고 서버를 한 번 재기동 — 기동 과정 중에(웹 트래픽을 받기 시작한 이후) 실행되고, 끝나면 그대로 서버로 계속 동작한다. 확인 후 환경변수는 반드시 해제해야 한다(안 그러면 재기동할 때마다 다시 실행됨).
+  2. **독립된 수동 배치로 (권장, 운영에서 실제 사용 중)**: `dek_ops_batch.sh`/`dek_ops_batch.bat`를 사용 — 웹 서버를 아예 띄우지 않는 별도 JVM 프로세스로 실행되고(`--spring.main.web-application-type=none`), 끝나면 프로세스가 스스로 종료된다(`app.dek-ops.batch-mode=true`). 운영 트래픽과 시간적으로 겹칠 여지가 전혀 없다는 점에서 1번보다 안전하다. Windows에서 `dek_ops_batch.bat rotate board` 또는 `dek_ops_batch.bat reencrypt board,user-pii` 형태로 실행하면, 스크립트를 운영 서버에 올리고 현재 배포된 `xaandemo-prod.jar`를 대상으로 ssh를 통해 원격 실행한다. (내부적으로 `-`를 "값 없음" sentinel로 써서 ssh 다중 인자 전달 시 빈 문자열 인자가 사라지며 인자가 밀리는 문제를 피한다 — 실제로 이 버그로 `reencrypt`가 `rotate`로 잘못 실행된 적이 있었다.)
+  - **`rotate`와 `reencrypt`를 같은 실행(같은 JVM 프로세스)에서 함께 하면 안 된다.** `EnvelopeCryptoService`는 Vault의 현재 DEK 버전을 앱(또는 배치 프로세스)이 뜰 때 딱 1번 읽어서 메모리에 고정하는데, 이건 `DekOpsRunner`가 실행되기 *전*이다. 그래서 한 실행 안에서 rotate 후 바로 reencrypt를 하면, reencrypt는 방금 만든 새 버전을 못 보고 여전히 rotate 이전 버전을 "현재"로 알고 동작한다 — **아무 의미 없는 재암호화**가 된다. 이래서 `dek_ops_batch.bat`에는 `both` 모드가 없고(있었으나 제거함), `DekOpsRunner.run()`도 두 값이 동시에 설정되면 `IllegalStateException`을 던지고 즉시 거부한다. 항상 `rotate` 실행 → 완료 확인 → **별도로** `reencrypt` 실행, 이 순서를 지켜야 한다.
+  - `DekRotationSupport`는 위 경로들을 통해 이미 `CryptoConfig`에 빈으로 연결되어 있다. `KekRotationSupport`도 빈으로는 연결되어 있으나, KEK 로테이션(3절)은 아직 위와 같은 명령어 트리거가 없다 — 필요하면 동일한 패턴으로 추가 가능.
 
 ---
 
@@ -37,12 +43,11 @@ Vault의 dek-v{n} 필드(KekService):          kekVersion(1B) | IV | ciphertext 
 ### 2.1 단계
 
 1. **현재 버전 확인**: `vault kv get -mount=ebiz_service ebiz_db/dek/{domain}`로 `current-version` 확인.
-2. **신규 DEK 발급**: `DekRotationSupport.rotate(domain)` 호출 → 새 DEK를 생성하고 현재 KEK로 wrap해 `dek-v{n+1}`로 저장, `current-version`을 `n+1`로 갱신. **구버전(`dek-v{n}`)은 그대로 남는다.**
-3. **앱 재기동/롤링 배포**: `DomainKeyRing`은 기동 시 1회만 로드하므로, 모든 인스턴스가 재기동돼야 새 버전을 인식한다. 이 시점부터 `encrypt()`는 항상 최신 버전을 쓰고, `decrypt()`는 헤더의 버전을 보고 구버전도 여전히 풀 수 있다.
-4. **점진적 재암호화**: 배치 작업으로 구버전 DEK 헤더를 가진 행을 찾아 `decrypt()` → `encrypt()` 후 다시 저장한다. 실시간 트래픽에 영향을 주지 않도록 배치 크기/속도를 제한한다.
-5. **완료 확인**: 구버전으로 암호화된 행이 0건인지 확인(예: 암호문 헤더의 두 번째 바이트를 검사하는 별도 점검 스크립트, 또는 배치 작업 자체의 최종 카운트).
-6. **구버전 폐기**: 0건 확인 후 `DekProvider.retire(domain, oldVersion)` 호출 → Vault에서 `dek-v{n}` 필드를 삭제. **`current-version`과 같은 값은 거부되므로 실수로 최신 버전을 지울 수 없다.**
-7. **다음 배포**: 이후 재기동부터는 `DomainKeyRing`이 구버전을 아예 로드하지 않는다.
+2. **신규 DEK 발급**: `dek_ops_batch.bat rotate {domain}` 실행(내부적으로 `DekRotationSupport.rotate(domain)` 호출) → 새 DEK를 생성하고 현재 KEK로 wrap해 `dek-v{n+1}`로 저장, `current-version`을 `n+1`로 갱신. **구버전(`dek-v{n}`)은 그대로 남는다.** 로그에 `DEK rotated for domain '...': new current version = n+1`이 찍히면 성공.
+3. **(항상 별도 실행으로) 재암호화**: 위 rotate와 **반드시 다른 실행**으로 `dek_ops_batch.bat reencrypt {domain}` 실행 — `dek_ops_batch.sh`는 실행될 때마다 새 JVM을 띄우므로 Vault에서 최신 `current-version`을 다시 읽어온다. 구버전 DEK 헤더를 가진 행을 찾아 `decrypt()` → `encrypt()` 후 다시 저장한다. 상시 실행 중인 메인 서버(웹 트래픽 처리 중)는 이 배치와 무관하게 계속 옛 `EnvelopeCryptoService` 상태로 돌아가고 있어도 무방하다 — 다음 재배포/재기동 때 새 버전을 인식하게 된다.
+4. **완료 확인**: `dek_ops_batch.bat reencrypt {domain}` 로그의 `migrated`/`skipped`/`notEnvelopeFormat`/`failed` 카운트를 확인한다. `failed`는 0이어야 한다. `notEnvelopeFormat`(레거시 구 포맷이라 애초에 건드리지 않는 행)이 있는 건 정상이며, 재실행해도 안전(idempotent)하다 — `migrated=0`이 될 때까지(또는 남은 게 전부 `notEnvelopeFormat`일 때까지) 반복 실행해도 됨.
+5. **구버전 폐기**: `migrated`가 0에 수렴한 걸 확인한 후 `DekProvider.retire(domain, oldVersion)` 호출 → Vault에서 `dek-v{n}` 필드를 삭제. **`current-version`과 같은 값은 거부되므로 실수로 최신 버전을 지울 수 없다.** (아직 이 단계를 트리거하는 `dek_ops_batch` 명령은 없음 — 필요하면 같은 패턴으로 추가.)
+6. **메인 서버도 새 버전을 쓰게 하기**: 다음 정기 배포(`deploy.bat`) 때 메인 서버도 재기동되면서 최신 DEK 버전을 `EnvelopeCryptoService`에 로드한다 — 이후 신규 저장 데이터도 최신 버전으로 암호화된다.
 
 ### 2.2 절차도
 
@@ -83,11 +88,12 @@ sequenceDiagram
 
 ### 2.3 체크리스트
 
-- [ ] `dek-v{n+1}` 저장 후 `vault kv get`으로 `current-version=n+1` 확인
-- [ ] 모든 앱 인스턴스 재기동 완료 (구버전 헤더 데이터에 대한 decrypt/validate가 계속 성공하는지 스팟체크)
-- [ ] 재암호화 배치 완료 카운트와 대상 건수 일치
-- [ ] 구버전 데이터 0건 재확인 (배치 완료 직후 + 일정 시간 후 한 번 더, race condition 대비)
-- [ ] `retire()` 호출 후 `vault kv get`으로 `dek-v{n}` 필드가 실제로 사라졌는지 확인
+- [ ] `dek_ops_batch.bat rotate {domain}` 실행 → 로그에서 `new current version` 확인
+- [ ] **`reencrypt`는 반드시 별도 실행으로** — rotate와 같은 실행에 합치지 않음(`both` 모드는 없음, 코드도 이를 거부함)
+- [ ] `dek_ops_batch.bat reencrypt {domain}` 로그의 `failed=0` 확인
+- [ ] `migrated`가 0에 수렴할 때까지(또는 남은 게 전부 `notEnvelopeFormat`일 때까지) 필요하면 재실행
+- [ ] 메인 서버도 다음 배포에서 재기동되어 최신 버전을 인식하는지 확인
+- [ ] (선택) `retire()` 호출 후 `vault kv get`으로 `dek-v{n}` 필드가 실제로 사라졌는지 확인
 
 ---
 
@@ -166,8 +172,11 @@ sequenceDiagram
 - **접근 권한 변경**: 키에 접근 가능했던 인원/시스템이 바뀌었을 때.
 - **알고리즘/키 길이 정책 변경**: 현재는 AES-256이 표준이라 당장 해당 없음.
 
-## 6. 관련 문서
+## 6. 관련 문서 / 코드
 
 - `KEK_DEK_ENCRYPTION_PLAN.md` — 전체 설계와 단계별(P0~P5) 구현 이력
-- `vault-crypto/README.md` — `KekService`/`KekProvider`/`KekRotationSupport`/`DekProvider`/`DekRotationSupport` API 문서, 트러블슈팅
+- `vault-crypto/README.md` — `KekService`/`KekProvider`/`KekRotationSupport`/`DekProvider`/`DekRotationSupport`/`EnvelopeCryptoService.currentVersion()`/`versionOf()` API 문서, 트러블슈팅
 - `bootstrap_kek_dek.py` — 최초 KEK/DEK 생성(버전 1) 스크립트
+- `src/main/java/com/xaan/demo/service/DekOpsRunner.java` — rotate/reencrypt 트리거 로직(동시 실행 방지 가드 포함)
+- `src/main/java/com/xaan/demo/service/DekReencryptionService.java` — 도메인별 재암호화 배치(레거시 포맷은 `notEnvelopeFormat`으로 구분, 진짜 실패만 `failed`)
+- `dek_ops_batch.sh` / `dek_ops_batch.bat` — 독립 수동 배치 실행 스크립트(운영 서버 대상, ssh 원격 실행)
