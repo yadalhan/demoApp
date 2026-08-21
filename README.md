@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.11.jar
+   java -jar build/libs/xaandemo-0.0.12.jar
    ```
 
 3. **Access the application:**
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.11.jar app.jar
+COPY build/libs/xaandemo-0.0.12.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.11.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.11.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.12.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.12.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,15 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.12 (2026-08-21)
+
+**Popup scope narrowed to password entry only.** Reworked the v0.0.11 popup UX per feedback: opening the whole detail view in a popup was more than needed. Now only the password prompt for a password-protected post is a popup; the detail view and edit screen are back to normal main-window pages.
+
+**Changes:**
+- `last100.html`/`list1st.html`/`list1stonly.html`: title links reverted to plain navigation (`th:href`) to `/posts/{id}`, opening in the main window as before v0.0.11
+- `posts/view.html`: reverted to a full main-window page (app header/logout restored). For an unverified password-protected post, a "비밀번호 확인" button opens a small popup instead of showing an inline password form
+- New `GET`/`POST /posts/{id}/verify-popup` (replacing the old `/posts/{id}/verify`) renders/handles a minimal `posts/verify-popup.html` form scoped to the popup. On success, a small `posts/verify-popup-success.html` response has the popup reload its opener (the main-window detail page, which now reads as verified) and close itself; on failure, the popup re-shows itself with an error and stays open for retry
 
 ### v0.0.11 (2026-08-21)
 

@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -63,19 +62,30 @@ public class IndexController {
         return "posts/view";
     }
 
-    // 게시글 비밀번호 확인 - 맞으면 세션에 확인 표시를 남기고 상세보기로 돌아간다
-    @PostMapping("/posts/{id}/verify")
-    public String verifyPostPassword(@PathVariable Long id, @RequestParam String password,
-                                      HttpSession session, RedirectAttributes redirectAttributes) {
+    // 비밀번호 확인 팝업 - 상세보기(메인 화면)와 분리된 별도 팝업 창에서만 비밀번호를 입력받는다
+    @GetMapping("/posts/{id}/verify-popup")
+    public String showVerifyPopup(@PathVariable Long id, Model model, HttpSession session) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        model.addAttribute("postId", id);
+        return "posts/verify-popup";
+    }
+
+    // 비밀번호 확인 제출 - 맞으면 세션에 확인 표시를 남기고 팝업이 스스로 닫히며 메인 화면(상세보기)을 새로고침한다
+    @PostMapping("/posts/{id}/verify-popup")
+    public String submitVerifyPopup(@PathVariable Long id, @RequestParam String password,
+                                     HttpSession session, Model model) {
         if (session.getAttribute("loginUser") == null) {
             return "redirect:/login";
         }
         if (boardService.verifyPassword(id, password)) {
             session.setAttribute("verifiedPost:" + id, Boolean.TRUE);
-        } else {
-            redirectAttributes.addFlashAttribute("passwordError", true);
+            return "posts/verify-popup-success";
         }
-        return "redirect:/posts/" + id;
+        model.addAttribute("postId", id);
+        model.addAttribute("passwordError", true);
+        return "posts/verify-popup";
     }
 
     @GetMapping("/list1st")
