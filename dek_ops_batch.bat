@@ -20,7 +20,8 @@ REM run rotate, let it finish, then run reencrypt as its own invocation.
 set PROD_SERVER=192.168.2.57
 set PROD_USER=xaan
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS
-set PROD_JAR=%PROD_BASE_DIR%/xaandemo-prod.jar
+REM Jar path is no longer passed as an argument - dek_ops_batch.sh always
+REM targets the stable xaandemo-prod.jar symlink itself, hardcoded there.
 
 REM "-" means "not set" - never pass an empty "" argument through to ssh below.
 REM ssh host cmd a b c rejoins separate arguments into one remote command string
@@ -50,7 +51,7 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo Running batch job on %PROD_SERVER% (rotate=!ROTATE_DOMAIN!, reencrypt=!REENCRYPT_DOMAINS!)...
-ssh "%PROD_USER%@%PROD_SERVER%" bash "%PROD_BASE_DIR%/dek_ops_batch.sh" "%PROD_JAR%" "!ROTATE_DOMAIN!" "!REENCRYPT_DOMAINS!"
+ssh "%PROD_USER%@%PROD_SERVER%" bash "%PROD_BASE_DIR%/dek_ops_batch.sh" "!ROTATE_DOMAIN!" "!REENCRYPT_DOMAINS!"
 if %ERRORLEVEL% NEQ 0 (
     echo Batch job failed - check the output above.
     exit /b 1

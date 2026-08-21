@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.9.jar
+   java -jar build/libs/xaandemo-0.0.10.jar
    ```
 
 3. **Access the application:**
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.9.jar app.jar
+COPY build/libs/xaandemo-0.0.10.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.9.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.9.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.10.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.10.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,18 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.10 (2026-08-21)
+
+**Password-gated post detail view.** Previously, clicking a title in any board list went straight to the edit form, which rendered the full title/content server-side with no password check at all - so anyone could read a "password-protected" post's content without ever entering the password. Added a real read-only detail view that only reveals content after the password is verified.
+
+**Changes:**
+- `IndexController`: added `GET /posts/{id}` (detail view) and `POST /posts/{id}/verify` (password check via the existing, previously-unused `BoardService.verifyPassword`). Once verified, the session remembers it for that post (no re-prompt until logout) - posts without a password skip the prompt entirely.
+- `BoardResponseDto`: added a `passwordProtected` flag (computed from whether `Board.password` is set) - never exposes the actual encrypted value
+- New `posts/view.html` template: shows a password form until verified, then the read-only content, with buttons back to the list and to the (still-unchanged) edit form
+- `last100.html`/`list1st.html`/`list1stonly.html`: title links now point to `/posts/{id}` instead of `/posts/update/{id}`
+- Deployed and verified: clean boot, `/last100` responds 200, no errors in logs
+- Known follow-up (not yet done): `GET /api/v1/posts/{id}` (REST API) still returns full content with no password check - a separate code path from the web UI fixed here
 
 ### v0.0.9 (2026-08-20)
 
