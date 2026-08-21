@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.10.jar
+   java -jar build/libs/xaandemo-0.0.11.jar
    ```
 
 3. **Access the application:**
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.10.jar app.jar
+COPY build/libs/xaandemo-0.0.11.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.10.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.10.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.11.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.11.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,14 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.11 (2026-08-21)
+
+**Post detail view opens as a popup window.** Front-end-only change: clicking a title in any list now opens `/posts/{id}` via `window.open()` (a real small browser window, not a modal) instead of navigating the current tab. No server-side changes - the same password-gated view/verify logic from v0.0.10 runs inside the popup as-is.
+
+**Changes:**
+- `last100.html`/`list1st.html`/`list1stonly.html`: title links now call a small `openPostPopup(url)` helper (`window.open(url, 'postViewPopup', 'width=650,height=600,scrollbars=yes,resizable=yes')`) instead of navigating directly
+- `posts/view.html`: trimmed for a compact popup (no app header/logout button); both the password-cancel and content "close" actions now call `window.close()` instead of navigating back to the list, since the list page is still open behind the popup
 
 ### v0.0.10 (2026-08-21)
 
