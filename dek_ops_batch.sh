@@ -6,16 +6,19 @@
 # process exits itself once the requested op(s) finish instead of staying up).
 # See DekOpsRunner.java and KEY_ROTATION_RUNBOOK.md §2.
 #
-# Usage: dek_ops_batch.sh <jar-path> [rotate-domain] [reencrypt-domains]
+# Always runs against the stable xaandemo-prod.jar symlink - there's only ever one
+# jar to point at (whatever's currently deployed), so it's fixed here rather than
+# taken as an argument.
+#
+# Usage: dek_ops_batch.sh [rotate-domain] [reencrypt-domains]
 # Pass "-" (or "") for an argument you're not using:
-#   ./dek_ops_batch.sh build/libs/xaandemo-0.0.7.jar board -
-#   ./dek_ops_batch.sh build/libs/xaandemo-0.0.7.jar - board,user-pii
-#   ./dek_ops_batch.sh build/libs/xaandemo-0.0.7.jar board board
+#   ./dek_ops_batch.sh board -
+#   ./dek_ops_batch.sh - board,user-pii
 set -e
 
-JAR="$1"
-ROTATE_DOMAIN="$2"
-REENCRYPT_DOMAINS="$3"
+JAR="/home/xaan/ws/demoBBS/xaandemo-prod.jar"
+ROTATE_DOMAIN="$1"
+REENCRYPT_DOMAINS="$2"
 
 # "-" means "not set". Prefer this over passing "" when invoked over ssh with
 # multiple separate arguments (ssh host cmd a b c) - ssh rejoins those into a
@@ -25,16 +28,12 @@ REENCRYPT_DOMAINS="$3"
 [ "$ROTATE_DOMAIN" = "-" ] && ROTATE_DOMAIN=""
 [ "$REENCRYPT_DOMAINS" = "-" ] && REENCRYPT_DOMAINS=""
 
-if [ -z "$JAR" ]; then
-    echo "Usage: dek_ops_batch.sh <jar-path> [rotate-domain] [reencrypt-domains]" >&2
-    exit 1
-fi
 if [ ! -f "$JAR" ]; then
     echo "Jar not found: $JAR" >&2
     exit 1
 fi
 if [ -z "$ROTATE_DOMAIN" ] && [ -z "$REENCRYPT_DOMAINS" ]; then
-    echo "Nothing to do: pass a rotate-domain and/or reencrypt-domains argument." >&2
+    echo "Usage: dek_ops_batch.sh [rotate-domain] [reencrypt-domains] (pass '-' for the one you're not using)" >&2
     exit 1
 fi
 

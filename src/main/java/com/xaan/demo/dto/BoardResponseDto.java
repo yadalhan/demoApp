@@ -11,6 +11,7 @@ public class BoardResponseDto {
     private String title;
     private String content;
     private String author;
+    private boolean passwordProtected;
 
     private LocalDateTime createdDate;
     private LocalDateTime modifiedDate;
@@ -20,6 +21,7 @@ public class BoardResponseDto {
         this.title   = entity.getTitle();
         this.content = entity.getContent();
         this.author  = entity.getAuthor();
+        this.passwordProtected = entity.getPassword() != null && !entity.getPassword().isEmpty();
 
         this.createdDate  = entity.getCreatedDate();
         this.modifiedDate  = entity.getModifiedDate();

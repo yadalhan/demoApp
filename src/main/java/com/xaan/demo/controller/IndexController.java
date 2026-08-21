@@ -8,6 +8,9 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -44,6 +47,35 @@ public class IndexController {
         }
         model.addAttribute("post", boardService.findById(id));
         return "posts/update";
+    }
+
+    // 게시글 상세보기 - 비밀번호가 설정된 글은 세션에서 확인된 경우에만 내용을 보여준다
+    @GetMapping("/posts/{id}")
+    public String viewPost(@PathVariable Long id, Model model, HttpSession session) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        BoardResponseDto post = boardService.findById(id);
+        boolean verified = !post.isPasswordProtected()
+                || Boolean.TRUE.equals(session.getAttribute("verifiedPost:" + id));
+        model.addAttribute("post", post);
+        model.addAttribute("verified", verified);
+        return "posts/view";
+    }
+
+    // 게시글 비밀번호 확인 - 맞으면 세션에 확인 표시를 남기고 상세보기로 돌아간다
+    @PostMapping("/posts/{id}/verify")
+    public String verifyPostPassword(@PathVariable Long id, @RequestParam String password,
+                                      HttpSession session, RedirectAttributes redirectAttributes) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        if (boardService.verifyPassword(id, password)) {
+            session.setAttribute("verifiedPost:" + id, Boolean.TRUE);
+        } else {
+            redirectAttributes.addFlashAttribute("passwordError", true);
+        }
+        return "redirect:/posts/" + id;
     }
 
     @GetMapping("/list1st")
