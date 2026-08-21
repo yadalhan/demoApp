@@ -1,10 +1,10 @@
 package com.xaan.demo.service;
 
+import com.xaan.vault.crypto.PasswordHasher;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -12,31 +12,31 @@ public class PasswordService {
 
     private static final Logger logger = LoggerFactory.getLogger(PasswordService.class);
 
-    private final BCryptPasswordEncoder bCryptPasswordEncoder;
+    private final PasswordHasher passwordHasher;
     private final EnvelopeCryptoService boardCryptoService;
     private final EnvelopeCryptoService userPiiCryptoService;
 
     public PasswordService(
             @Qualifier("boardCryptoService") EnvelopeCryptoService boardCryptoService,
             @Qualifier("userPiiCryptoService") EnvelopeCryptoService userPiiCryptoService) {
-        this.bCryptPasswordEncoder = new BCryptPasswordEncoder();
+        this.passwordHasher = new PasswordHasher();
         this.boardCryptoService = boardCryptoService;
         this.userPiiCryptoService = userPiiCryptoService;
         logger.info("PasswordService initialized with KEK-DEK envelope encryption (board, user-pii domains)");
     }
 
     /**
-     * BCrypt 단방향 해시 - 사용자 비밀번호용
+     * BCrypt 단방향 해시 - 사용자 비밀번호용 (vault-crypto의 PasswordHasher 위임)
      */
     public String hashUserPassword(String password) {
-        return bCryptPasswordEncoder.encode(password);
+        return passwordHasher.hash(password);
     }
 
     /**
-     * BCrypt 검증 - 사용자 비밀번호 검증용
+     * BCrypt 검증 - 사용자 비밀번호 검증용 (vault-crypto의 PasswordHasher 위임)
      */
     public boolean validateUserPassword(String rawPassword, String hashedPassword) {
-        return bCryptPasswordEncoder.matches(rawPassword, hashedPassword);
+        return passwordHasher.matches(rawPassword, hashedPassword);
     }
 
     /**
