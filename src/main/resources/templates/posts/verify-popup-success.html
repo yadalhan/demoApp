@@ -1,13 +1,14 @@
 <!DOCTYPE HTML>
-<html>
+<html xmlns:th="http://www.thymeleaf.org">
 <head>
     <title>확인 완료</title>
     <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
 </head>
 <body>
-    <script>
+    <script th:inline="javascript">
+        var postId = /*[[${postId}]]*/ 0;
         if (window.opener) {
-            window.opener.location.reload();
+            window.opener.location.href = '/posts/' + postId;
         }
         window.close();
     </script>
