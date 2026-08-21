@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.12.jar
+   java -jar build/libs/xaandemo-0.0.13.jar
    ```
 
 3. **Access the application:**
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.12.jar app.jar
+COPY build/libs/xaandemo-0.0.13.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.12.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.12.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.13.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.13.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,17 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.13 (2026-08-21)
+
+**List click now opens the password popup directly.** Removed the remaining intermediate step from v0.0.12: previously a click navigated to the main-window detail page first, which then required clicking a "비밀번호 확인" button to open the popup. Now, for a password-protected post the row hasn't been verified for this session, clicking its title in any list opens the popup immediately - no detail page, no extra button click. Un-protected or already-verified posts still navigate straight to `/posts/{id}` as before.
+
+**Changes:**
+- `IndexController`/`Top100IndexController`: each list-rendering endpoint (`/`, `/last100`, `/list1st`, `/list1stonly`) now also adds a `needsPopupIds` model attribute - the set of post ids that are password-protected and not yet verified in this session
+- `last100.html`/`list1st.html`/`list1stonly.html`: each title cell renders either a popup-opening link (`th:if="${needsPopupIds.contains(post.id)}"`) or a normal navigation link (`th:unless`), decided server-side per row
+- `posts/verify-popup.html`: simplified to a bare, dependency-free form (no Bootstrap) so the popup window itself can be sized down to a minimal `300x180`
+- `posts/verify-popup-success.html`: on a correct password, the popup now sends its opener straight to `/posts/{id}` (the now-verified detail page) instead of just reloading whatever the opener happened to be showing
+- `posts/view.html`'s inline "비밀번호 확인" button is kept only as a fallback for the edge case of navigating to `/posts/{id}` directly (e.g. a bookmarked link) without having come from a list - browsers block a script-triggered `window.open()` that isn't a direct result of a user click, so an unprompted auto-popup on page load isn't reliable there
 
 ### v0.0.12 (2026-08-21)
 

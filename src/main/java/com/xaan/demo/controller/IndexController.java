@@ -10,10 +10,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Slice;
 import org.springframework.data.web.PageableDefault;
+
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Controller
@@ -27,7 +29,9 @@ public class IndexController {
             return "redirect:/login";
         }
         model.addAttribute("loginUser", loginUser);
-        model.addAttribute("posts", boardService.findLast100());
+        List<BoardResponseDto> posts = boardService.findLast100();
+        model.addAttribute("posts", posts);
+        model.addAttribute("needsPopupIds", needsPopupIds(posts, session));
         return "last100";
     }
 
@@ -72,7 +76,7 @@ public class IndexController {
         return "posts/verify-popup";
     }
 
-    // 비밀번호 확인 제출 - 맞으면 세션에 확인 표시를 남기고 팝업이 스스로 닫히며 메인 화면(상세보기)을 새로고침한다
+    // 비밀번호 확인 제출 - 맞으면 세션에 확인 표시를 남기고 팝업이 메인 화면을 상세보기로 이동시킨 뒤 스스로 닫힌다
     @PostMapping("/posts/{id}/verify-popup")
     public String submitVerifyPopup(@PathVariable Long id, @RequestParam String password,
                                      HttpSession session, Model model) {
@@ -81,6 +85,7 @@ public class IndexController {
         }
         if (boardService.verifyPassword(id, password)) {
             session.setAttribute("verifiedPost:" + id, Boolean.TRUE);
+            model.addAttribute("postId", id);
             return "posts/verify-popup-success";
         }
         model.addAttribute("postId", id);
@@ -93,8 +98,9 @@ public class IndexController {
         if (session.getAttribute("loginUser") == null) {
             return "redirect:/login";
         }
-        Page<BoardResponseDto> posts = boardService.getBoardList(pageable);
-        model.addAttribute("posts", posts.getContent());
+        List<BoardResponseDto> posts = boardService.getBoardList(pageable).getContent();
+        model.addAttribute("posts", posts);
+        model.addAttribute("needsPopupIds", needsPopupIds(posts, session));
         return "list1st";
     }
 
@@ -103,9 +109,19 @@ public class IndexController {
         if (session.getAttribute("loginUser") == null) {
             return "redirect:/login";
         }
-        Slice<BoardResponseDto> posts = boardService.getBoardList1stOnly(pageable);
-        model.addAttribute("posts", posts.getContent());
+        List<BoardResponseDto> posts = boardService.getBoardList1stOnly(pageable).getContent();
+        model.addAttribute("posts", posts);
+        model.addAttribute("needsPopupIds", needsPopupIds(posts, session));
         return "list1stonly";
+    }
+
+    // 목록에서 비밀번호 미확인 상태인 비밀번호-보호 글의 id만 모아, 목록 클릭 시 바로 팝업을 띄울지 판단하는 데 쓴다
+    private Set<Long> needsPopupIds(List<BoardResponseDto> posts, HttpSession session) {
+        return posts.stream()
+                .filter(BoardResponseDto::isPasswordProtected)
+                .filter(post -> !Boolean.TRUE.equals(session.getAttribute("verifiedPost:" + post.getId())))
+                .map(BoardResponseDto::getId)
+                .collect(Collectors.toSet());
     }
 
     @GetMapping("/bbs_summary")
