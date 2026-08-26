@@ -2,8 +2,8 @@ package com.xaan.demo.service;
 
 import com.xaan.demo.domain.entity.Board;
 import com.xaan.demo.domain.entity.User;
-import com.xaan.demo.domain.repository.BoardRepository;
-import com.xaan.demo.domain.repository.UserRepository;
+import com.xaan.demo.domain.mapper.BoardMapper;
+import com.xaan.demo.domain.mapper.UserMapper;
 import com.xaan.vault.crypto.CryptoException;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
 import org.slf4j.Logger;
@@ -35,25 +35,25 @@ public class DekReencryptionService {
 
     private static final Logger logger = LoggerFactory.getLogger(DekReencryptionService.class);
 
-    private final BoardRepository boardRepository;
-    private final UserRepository userRepository;
+    private final BoardMapper boardMapper;
+    private final UserMapper userMapper;
     private final EnvelopeCryptoService boardCryptoService;
     private final EnvelopeCryptoService userPiiCryptoService;
 
     public DekReencryptionService(
-            BoardRepository boardRepository,
-            UserRepository userRepository,
+            BoardMapper boardMapper,
+            UserMapper userMapper,
             @Qualifier("boardCryptoService") EnvelopeCryptoService boardCryptoService,
             @Qualifier("userPiiCryptoService") EnvelopeCryptoService userPiiCryptoService) {
-        this.boardRepository = boardRepository;
-        this.userRepository = userRepository;
+        this.boardMapper = boardMapper;
+        this.userMapper = userMapper;
         this.boardCryptoService = boardCryptoService;
         this.userPiiCryptoService = userPiiCryptoService;
     }
 
     @Transactional
     public MigrationResult reencryptBoardPasswords() {
-        List<Board> boards = boardRepository.findAll();
+        List<Board> boards = boardMapper.findAllByOrderByIdDesc();
         int migrated = 0;
         int skipped = 0;
         int notEnvelopeFormat = 0;
@@ -71,6 +71,7 @@ public class DekReencryptionService {
                 }
                 String plain = boardCryptoService.decrypt(password);
                 board.updatePassword(boardCryptoService.encrypt(plain));
+                boardMapper.updatePassword(board.getId(), board.getPassword());
                 migrated++;
             } catch (CryptoException e) {
                 notEnvelopeFormat++;
@@ -84,7 +85,7 @@ public class DekReencryptionService {
 
     @Transactional
     public MigrationResult reencryptUserPii() {
-        List<User> users = userRepository.findAll();
+        List<User> users = userMapper.findAll();
         int migrated = 0;
         int skipped = 0;
         int notEnvelopeFormat = 0;
@@ -102,6 +103,7 @@ public class DekReencryptionService {
                 }
                 String plain = userPiiCryptoService.decrypt(rrn);
                 user.updateResidentRegistrationNumber(userPiiCryptoService.encrypt(plain));
+                userMapper.updateResidentRegistrationNumber(user.getId(), user.getResidentRegistrationNumber());
                 migrated++;
             } catch (CryptoException e) {
                 notEnvelopeFormat++;

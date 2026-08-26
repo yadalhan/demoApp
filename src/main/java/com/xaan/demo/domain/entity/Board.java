@@ -1,29 +1,20 @@
 package com.xaan.demo.domain.entity;
 
-import jakarta.persistence.*;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Getter
 @NoArgsConstructor
-@Entity
-
 public class Board extends BaseTimeEntity {
-    @Id // PK (Primary Key)
-    @GeneratedValue(strategy = GenerationType.IDENTITY) // Auto Increment
     private Long id;
 
-    @Column(length = 500, nullable = false)
     private String title;
 
-    @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
-    
-    @Column(length = 100)
+
     private String author;
-    
-    @Column(length = 255)
+
     private String password;
 
     @Builder //builder pattern class

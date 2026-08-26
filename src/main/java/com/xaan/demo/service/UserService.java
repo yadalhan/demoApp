@@ -1,7 +1,7 @@
 package com.xaan.demo.service;
 
 import com.xaan.demo.domain.entity.User;
-import com.xaan.demo.domain.repository.UserRepository;
+import com.xaan.demo.domain.mapper.UserMapper;
 import com.xaan.demo.dto.UserRegisterRequestDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -14,7 +14,7 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Service
 public class UserService {
-    private final UserRepository userRepository;
+    private final UserMapper userMapper;
     private final PasswordService passwordService;
 
     @Transactional
@@ -36,7 +36,7 @@ public class UserService {
         }
         validateKoreanResidentRegistrationNumber(dto.getResidentRegistrationNumberFront(), dto.getResidentRegistrationNumberBack());
 
-        if (userRepository.existsByUserId(dto.getUserId())) {
+        if (userMapper.existsByUserId(dto.getUserId())) {
             throw new IllegalArgumentException("이미 존재하는 사용자 ID입니다.");
         }
 
@@ -51,11 +51,12 @@ public class UserService {
                 .residentRegistrationNumber(encryptedResidentRegistrationNumber)
                 .build();
 
-        return userRepository.save(user).getId();
+        userMapper.insert(user);
+        return user.getId();
     }
 
     public Optional<User> findByUserId(String userId) {
-        return userRepository.findByUserId(userId);
+        return userMapper.findByUserId(userId);
     }
 
     private void validateKoreanResidentRegistrationNumber(String front, String back) {
@@ -90,7 +91,7 @@ public class UserService {
      * 로그인 검증 - BCrypt 사용
      */
     public boolean validateLogin(String userId, String rawPassword) {
-        Optional<User> userOpt = userRepository.findByUserId(userId);
+        Optional<User> userOpt = userMapper.findByUserId(userId);
         if (userOpt.isEmpty()) {
             return false;
         }
