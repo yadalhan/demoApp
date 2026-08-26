@@ -5,10 +5,10 @@ plugins {
 }
 
 group = 'com.xaan'
-version = '0.0.14'
+version = '0.0.15'
 
 jar.archiveBaseName = 'xaandemo'
-jar.archiveVersion = '0.0.14'
+jar.archiveVersion = '0.0.15'
 
 java {
     toolchain {
@@ -27,7 +27,9 @@ repositories {
 
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
-    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    // MyBatis 3.5.16 (starter 3.0.4 is the Spring Boot 3.x line; mybatis pinned explicitly)
+    implementation 'org.mybatis:mybatis:3.5.16'
+    implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:3.0.4'
     implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
     implementation 'org.springframework.cloud:spring-cloud-starter-vault-config'
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -62,5 +64,5 @@ tasks.named('test') {
 
 bootJar {
     archiveBaseName = 'xaandemo'
-    archiveVersion = '0.0.14'
+    archiveVersion = '0.0.15'
 }

@@ -163,7 +163,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.14.jar
+   java -jar build/libs/xaandemo-0.0.15.jar
    ```
 
 3. **Access the application:**
@@ -253,14 +253,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.14.jar app.jar
+COPY build/libs/xaandemo-0.0.15.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.14.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.14.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.15.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.15.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +286,18 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.15 (2026-08-26)
+
+**Persistence layer migrated from Spring Data JPA to MyBatis 3.5.16.** All database access now goes through annotation-based mapper interfaces instead of Spring Data repositories. No behavior change for users - same endpoints, same data, same encryption flows; only the DB wiring underneath changed.
+
+**Changes:**
+- `build.gradle`: replaced `spring-boot-starter-data-jpa` with `mybatis-spring-boot-starter:3.0.4` + `org.mybatis:mybatis:3.5.16`
+- New `domain/mapper/BoardMapper.java` / `UserMapper.java`: annotation-based SQL (`@Insert`/`@Select`/`@Update`) replacing the deleted `BoardRepository`/`UserRepository`
+- Entities (`Board`, `User`, `BaseTimeEntity`): stripped all `jakarta.persistence` annotations/mappings; `BoardSummaryDto` converted from a projection interface to a plain class
+- Services (`BoardService`, `UserService`, `DekReencryptionService`) switched from repositories to mappers; `IndexController` dropped `Pageable`; `DemoApplication` removed `@EnableJpaAuditing`
+- `application.properties`: JPA settings replaced with MyBatis configuration (`map-underscore-to-camel-case=true`)
+- Verified end-to-end on production: build, deploy, and an 8-step smoke test (board save/find/update, /last100, register, login, authed list, native-summary query) all passed against the real PostgreSQL
 
 ### v0.0.14 (2026-08-21)
 
