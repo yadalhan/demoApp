@@ -10,8 +10,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.web.PageableDefault;
 
 import java.util.List;
 import java.util.Set;
@@ -94,22 +92,22 @@ public class IndexController {
     }
 
     @GetMapping("/list1st")
-    public String getBoardList(@PageableDefault(size = 10) Pageable pageable, Model model, HttpSession session) {
+    public String getBoardList(Model model, HttpSession session) {
         if (session.getAttribute("loginUser") == null) {
             return "redirect:/login";
         }
-        List<BoardResponseDto> posts = boardService.getBoardList(pageable).getContent();
+        List<BoardResponseDto> posts = boardService.getBoardList();
         model.addAttribute("posts", posts);
         model.addAttribute("needsPopupIds", needsPopupIds(posts, session));
         return "list1st";
     }
 
     @GetMapping("/list1stonly")
-    public String getBoardList1stOnly(@PageableDefault(size = 10) Pageable pageable, Model model, HttpSession session) {
+    public String getBoardList1stOnly(Model model, HttpSession session) {
         if (session.getAttribute("loginUser") == null) {
             return "redirect:/login";
         }
-        List<BoardResponseDto> posts = boardService.getBoardList1stOnly(pageable).getContent();
+        List<BoardResponseDto> posts = boardService.getBoardList1stOnly();
         model.addAttribute("posts", posts);
         model.addAttribute("needsPopupIds", needsPopupIds(posts, session));
         return "list1stonly";
