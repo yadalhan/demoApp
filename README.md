@@ -45,7 +45,8 @@ src/main/java/com/xaan/demo/
 └── service/
     ├── BoardService.java         # Board business logic (crypto는 TypeHandler에 위임)
     ├── PasswordService.java      # BCrypt 해시 + blind index 계산 (vault-crypto 위임)
-    └── UserService.java          # User business logic + 검색
+    ├── UserService.java          # User business logic + 검색
+    └── UserSearchCacheService.java # /users2용 @Cacheable 전담 빈 (self-invocation 회피 목적으로 분리)
 
 src/main/resources/
 ├── application.properties        # Application configuration
@@ -304,14 +305,15 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 **사용자 목록2 (`/users2`) - Redis 캐시를 쓰면서도 캐시에는 절대 복호화된 개인정보를 올리지 않는 예제.** `/users`와 화면·검색 조건은 동일하지만, DB 조회 결과를 Redis에 캐싱한다.
 
-**설계**: Redis(`spring.cache.type=redis`)에 올라가는 값은 `UserMapper.search()`가 반환하는 **암호문 그대로의** `User` 목록뿐이다 - `UserService.searchRawCached(...)`가 `@Cacheable("userSearchRaw")`로 이 raw 조회만 캐싱한다. 복호화(`PasswordService.decryptUserPiiForDisplay(...)`)는 캐시 적중 여부와 무관하게 `UserService.searchCached(...)`가 **캐시에서 꺼낸 뒤 매번** 수행하므로, Redis 서버/네트워크 어디에도 평문 주민등록번호·전화번호가 노출되지 않는다.
+**설계**: Redis(`spring.cache.type=redis`)에 올라가는 값은 `UserMapper.search()`가 반환하는 **암호문 그대로의** `User` 목록뿐이다 - `UserSearchCacheService.search(...)`가 `@Cacheable("userSearchRaw")`로 이 raw 조회만 캐싱한다. 복호화(`PasswordService.decryptUserPiiForDisplay(...)`)는 캐시 적중 여부와 무관하게 `UserService.searchCached(...)`가 **캐시에서 꺼낸 뒤 매번** 수행하므로, Redis 서버/네트워크 어디에도 평문 주민등록번호·전화번호가 노출되지 않는다.
 
 **Changes:**
 - `User` 엔티티에 `Serializable` 추가 (Redis 캐시 값 직렬화에 필요 - 캐시에 담기는 필드는 항상 ciphertext뿐)
-- `UserService.searchRawCached(name, phoneBlindIndex, rrnBlindIndex)` 추가 (`@Cacheable(value = "userSearchRaw")`, raw ciphertext만 반환), `searchCached(...)`가 이를 호출한 뒤 행별 복호화
+- 신규 빈 `UserSearchCacheService.search(name, phoneBlindIndex, rrnBlindIndex)` 추가 (`@Cacheable(value = "userSearchRaw")`, raw ciphertext만 반환) - `UserService`가 아닌 **별도 빈**으로 분리했다. 같은 클래스 안에서 `@Cacheable` 메서드를 `this`로 직접 호출(self-invocation)하면 Spring 프록시를 우회해 캐싱이 조용히 동작하지 않는데(실제로 처음엔 이렇게 구현했다가 배포 직후 발견해 고쳤다), 별도 빈을 거치면 항상 프록시를 통해 호출되므로 이 문제가 원천적으로 없다. `UserService.searchCached(...)`가 이 빈을 호출한 뒤 행별 복호화
 - `UserService.register()`에 `@CacheEvict(value = "userSearchRaw", allEntries = true)` 추가 - 안 그러면 방금 가입한 사용자가 TTL(5분) 동안 검색 결과에 안 보임
 - `UserAdminController`에 `GET /users2` 추가, 신규 템플릿 `users/list2.html`은 `/users`와 완전히 동일한 레이아웃/검색 조건/마스킹 - 폼 action만 `/users2`
 - 두 목록 페이지 상단에 서로를 오가는 버튼 추가
+- 캐싱이 실제로 동작하는지 `redis-cli` 없이도 검증: `pg_stat_user_tables.seq_scan`(이름 검색은 `EXPLAIN`으로 `Seq Scan`임을 확인)을 기준으로, 새 검색어 최초 조회는 DB를 실제로 타고(+1) 동일 검색어 재조회는 타지 않음(+0)을 직접 확인
 
 ### v0.0.17 (2026-08-29) — critical fix for v0.0.16
 
