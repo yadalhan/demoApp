@@ -5,10 +5,10 @@ plugins {
 }
 
 group = 'com.xaan'
-version = '0.0.15'
+version = '0.0.16'
 
 jar.archiveBaseName = 'xaandemo'
-jar.archiveVersion = '0.0.15'
+jar.archiveVersion = '0.0.16'
 
 java {
     toolchain {
@@ -36,7 +36,7 @@ dependencies {
 
     // vault-crypto: KEK-DEK envelope encryption (board password, resident registration number)
     // and BCrypt password hashing (PasswordHasher) - all password-related crypto lives there now
-    implementation 'com.xaan:vault-crypto:0.0.8'
+    implementation 'com.xaan:vault-crypto:0.0.9'
     
     // Redis for caching
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
@@ -64,5 +64,5 @@ tasks.named('test') {
 
 bootJar {
     archiveBaseName = 'xaandemo'
-    archiveVersion = '0.0.15'
+    archiveVersion = '0.0.16'
 }

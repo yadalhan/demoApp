@@ -1,6 +1,6 @@
 package com.xaan.demo.service;
 
-import com.xaan.vault.crypto.CryptoException;
+import com.xaan.vault.crypto.blindindex.BlindIndexService;
 import com.xaan.vault.crypto.envelope.DekProvider;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
 import com.xaan.vault.crypto.envelope.KekService;
@@ -14,51 +14,52 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PasswordServiceTest {
 
     @Test
-    void encryptBoardPasswordCanBeDecrypted() {
-        PasswordService passwordService = newPasswordService();
+    void validateBoardPasswordAcceptsTheCorrectPassword() {
+        EnvelopeCryptoService boardCryptoService = newBoardCryptoService();
+        PasswordService passwordService = newPasswordService(boardCryptoService);
 
-        String encryptedPassword = passwordService.encryptBoardPassword("900101123456");
+        String encrypted = boardCryptoService.encrypt("900101123456");
 
-        assertThat(encryptedPassword).isNotEqualTo("900101123456");
-        assertThat(passwordService.decryptBoardPassword(encryptedPassword)).isEqualTo("900101123456");
+        assertThat(passwordService.validateBoardPassword("900101123456", encrypted)).isTrue();
+        assertThat(passwordService.validateBoardPassword("wrong", encrypted)).isFalse();
     }
 
     @Test
-    void encryptUserPiiUsesASeparateDomainFromBoardPassword() {
-        PasswordService passwordService = newPasswordService();
-
-        String encryptedRrn = passwordService.encryptUserPii("900101-1234567");
-
-        assertThat(passwordService.decryptUserPii(encryptedRrn)).isEqualTo("900101-1234567");
-    }
-
-    @Test
-    void preEnvelopeCiphertextIsNoLongerDecryptable() {
+    void preEnvelopeCiphertextFailsValidationInsteadOfThrowing() {
         // Legacy migration/compatibility was dropped: old single-key ciphertext is now
         // just unreadable noise rather than something the app falls back to decrypting.
-        PasswordService passwordService = newPasswordService();
+        PasswordService passwordService = newPasswordService(newBoardCryptoService());
         String legacyLookingCiphertext = "JrwIlNN9YVMIxpqWvYhlNGfd7CUf1wjOgXAHLRIf0io=";
 
-        assertThatThrownBy(() -> passwordService.decryptBoardPassword(legacyLookingCiphertext))
-                .isInstanceOf(CryptoException.class);
         assertThat(passwordService.validateBoardPassword("anything", legacyLookingCiphertext)).isFalse();
     }
 
-    private PasswordService newPasswordService() {
+    @Test
+    void blindIndexIsDeterministicAndFieldsAreIndependent() {
+        PasswordService passwordService = newPasswordService(newBoardCryptoService());
+
+        assertThat(passwordService.computePhoneBlindIndex("01012345678"))
+                .isEqualTo(passwordService.computePhoneBlindIndex("01012345678"));
+        assertThat(passwordService.computePhoneBlindIndex("01012345678"))
+                .isNotEqualTo(passwordService.computeRrnBlindIndex("01012345678"));
+    }
+
+    private PasswordService newPasswordService(EnvelopeCryptoService boardCryptoService) {
+        return new PasswordService(
+                boardCryptoService,
+                BlindIndexService.withKey(randomBytes(32)),
+                BlindIndexService.withKey(randomBytes(32)));
+    }
+
+    private EnvelopeCryptoService newBoardCryptoService() {
         KekService kek = new KekService(randomBytes(32));
         InMemoryDekProvider dekProvider = new InMemoryDekProvider();
         seedDek(kek, dekProvider, "board", 1);
-        seedDek(kek, dekProvider, "user-pii", 1);
-
-        EnvelopeCryptoService boardCryptoService = EnvelopeCryptoService.forDomain((byte) 1, "board", kek, dekProvider);
-        EnvelopeCryptoService userPiiCryptoService = EnvelopeCryptoService.forDomain((byte) 2, "user-pii", kek, dekProvider);
-
-        return new PasswordService(boardCryptoService, userPiiCryptoService);
+        return EnvelopeCryptoService.forDomain((byte) 1, "board", kek, dekProvider);
     }
 
     private static void seedDek(KekService kek, InMemoryDekProvider dekProvider, String domain, int version) {

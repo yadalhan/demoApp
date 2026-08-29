@@ -3,13 +3,16 @@ package com.xaan.demo.service;
 import com.xaan.demo.domain.entity.User;
 import com.xaan.demo.domain.mapper.UserMapper;
 import com.xaan.demo.dto.UserRegisterRequestDto;
+import com.xaan.demo.dto.UserResponseDto;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Service
@@ -36,23 +39,53 @@ public class UserService {
         }
         validateKoreanResidentRegistrationNumber(dto.getResidentRegistrationNumberFront(), dto.getResidentRegistrationNumberBack());
 
+        if (dto.getPhone() == null || dto.getPhone().isEmpty()) {
+            throw new IllegalArgumentException("전화번호를 입력해주세요.");
+        }
+        String normalizedPhone = normalizePhone(dto.getPhone());
+        if (!normalizedPhone.matches("\\d{9,11}")) {
+            throw new IllegalArgumentException("전화번호는 숫자만 9~11자리로 입력해주세요.");
+        }
+
         if (userMapper.existsByUserId(dto.getUserId())) {
             throw new IllegalArgumentException("이미 존재하는 사용자 ID입니다.");
         }
 
-        // 사용자 비밀번호는 BCrypt 단방향 해시
+        // 사용자 비밀번호는 BCrypt 단방향 해시. 주민등록번호/전화번호는 평문 그대로 넘긴다 -
+        // UserMapper.insert()의 UserPiiTypeHandler가 AES-GCM으로 암호화해 저장한다.
         String hashedPassword = passwordService.hashUserPassword(dto.getPassword());
-        String encryptedResidentRegistrationNumber = passwordService.encryptUserPii(dto.getResidentRegistrationNumber());
+        String residentRegistrationNumber = dto.getResidentRegistrationNumber();
 
         User user = User.builder()
                 .userId(dto.getUserId())
                 .password(hashedPassword)
                 .username(dto.getUsername())
-                .residentRegistrationNumber(encryptedResidentRegistrationNumber)
+                .residentRegistrationNumber(residentRegistrationNumber)
+                .phone(normalizedPhone)
+                .residentRegistrationNumberBlindIndex(passwordService.computeRrnBlindIndex(residentRegistrationNumber))
+                .phoneBlindIndex(passwordService.computePhoneBlindIndex(normalizedPhone))
                 .build();
 
         userMapper.insert(user);
         return user.getId();
+    }
+
+    private String normalizePhone(String phone) {
+        return phone.replaceAll("[^0-9]", "");
+    }
+
+    /**
+     * 사용자 검색 - 이름은 부분 일치, 전화번호/주민등록번호는 blind index를 통한 정확 일치.
+     * 검색어가 모두 비어 있으면 전체 목록을 반환한다.
+     */
+    public List<UserResponseDto> search(String name, String phone, String residentRegistrationNumber) {
+        String phoneBlindIndex = (phone == null || phone.isEmpty())
+                ? null : passwordService.computePhoneBlindIndex(normalizePhone(phone));
+        String rrnBlindIndex = (residentRegistrationNumber == null || residentRegistrationNumber.isEmpty())
+                ? null : passwordService.computeRrnBlindIndex(residentRegistrationNumber);
+        return userMapper.search(name, phoneBlindIndex, rrnBlindIndex).stream()
+                .map(UserResponseDto::new)
+                .collect(Collectors.toList());
     }
 
     public Optional<User> findByUserId(String userId) {

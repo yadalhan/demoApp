@@ -21,26 +21,27 @@ public class BoardService {
     private final BoardMapper boardMapper;
     private final PasswordService passwordService;
 
-    // 1. save - 게시글 비밀번호는 AES-GCM으로 암호화
+    // 1. save - 비밀번호는 평문 그대로 넘긴다. BoardMapper.insert()의 BoardPasswordTypeHandler가
+    // AES-GCM으로 암호화해 저장하므로 여기서 vault-crypto를 직접 호출할 필요가 없다.
     @Transactional
     public Long save(BoardSaveRequestDto requestDto) {
         Board board = requestDto.toEntity();
-        if (board.getPassword() != null && !board.getPassword().isEmpty()) {
-            board.updatePassword(passwordService.encryptBoardPassword(board.getPassword()));
-        }
         boardMapper.insert(board);
         return board.getId();
     }
 
-    // 2. update - 게시글 비밀번호는 AES-GCM으로 암호화
+    // 2. update - 제목/내용 수정과 비밀번호 교체를 별도 쿼리로 분리한다(BoardMapper.updateTitleContent 주석 참고):
+    // board.password는 항상 암호문으로만 다뤄지므로, 바뀌지 않은 기존 비밀번호를 TypeHandler가 있는 파라미터로
+    // 다시 흘려보내면 이미 암호문인 값을 이중 암호화하게 된다.
     @Transactional
     public Long update(Long id, BoardUpdateRequestDto requestDto) {
-        Board board = findBoard(id);
-        board.update(requestDto.getTitle(), requestDto.getContent());
-        if (requestDto.getPassword() != null && !requestDto.getPassword().isEmpty()) {
-            board.updatePassword(passwordService.encryptBoardPassword(requestDto.getPassword()));
+        int rows = boardMapper.updateTitleContent(id, requestDto.getTitle(), requestDto.getContent());
+        if (rows == 0) {
+            throw new IllegalArgumentException("no ariticle for id=" + id);
         }
-        boardMapper.update(board);
+        if (requestDto.getPassword() != null && !requestDto.getPassword().isEmpty()) {
+            boardMapper.updatePassword(id, requestDto.getPassword()); // 평문 - TypeHandler가 암호화
+        }
         return id;
     }
 

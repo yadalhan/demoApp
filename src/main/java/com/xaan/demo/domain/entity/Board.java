@@ -24,13 +24,4 @@ public class Board extends BaseTimeEntity {
         this.author  = author;
         this.password = password;
 }
-    
-    public void update(String title, String content) {
-        this.title = title;
-        this.content = content;
-    }
-    
-    public void updatePassword(String password) {
-        this.password = password;
-    }
 }

@@ -6,13 +6,14 @@ A Spring Boot demo application with comprehensive features for board/article man
 
 - **Spring Boot 3.4.0** with Java 17
 - **PostgreSQL** database integration
-- **JPA with Hibernate** for data persistence
+- **MyBatis** for data persistence (annotation-mapped mappers, no JPA/Hibernate)
 - **Thymeleaf** templating engine for server-side rendering
 - **Board/Article management system** with CRUD operations
+- **User directory with search** - name (부분 일치), phone/RRN (정확 일치 via blind index)
 - **Vault configuration** for secrets management
 - **Gradle build system** with wrapper
 - **Spring Cloud Vault** integration
-- **Password encryption service** - all delegated to `vault-crypto`: BCrypt (사용자 비밀번호) + KEK-DEK 봉투 암호화 (게시글/개인정보, AES-GCM)
+- **Password/PII encryption** - all delegated to `vault-crypto`, applied transparently via MyBatis `TypeHandler`s so `BoardService`/`UserService` never call crypto directly: BCrypt (로그인 비밀번호), KEK-DEK 봉투 암호화 (게시글 비밀번호/주민등록번호/전화번호, AES-GCM), blind index (전화번호/주민등록번호 검색용 HMAC)
 - **Pagination support** for board listings
 
 ## Project Structure
@@ -21,39 +22,43 @@ A Spring Boot demo application with comprehensive features for board/article man
 src/main/java/com/xaan/demo/
 ├── DemoApplication.java          # Main application entry point
 ├── config/
-│   └── VaultConfig.java          # Vault configuration
+│   ├── CryptoConfig.java         # vault-crypto beans: KEK/DEK/EnvelopeCryptoService, BlindIndexService
+│   └── mybatis/
+│       ├── BoardPasswordTypeHandler.java  # board.password 암호화 (쓰기 전용, 레거시 데이터 때문)
+│       └── UserPiiTypeHandler.java        # users.id_no/phone 암/복호화 (읽기+쓰기)
 ├── controller/
+│   ├── AuthController.java       # Login/register/logout
 │   ├── BoardApiController.java   # REST API controller
 │   ├── IndexController.java      # Main page controller
 │   ├── Top100IndexController.java # Top 100 listings controller
-│   └── UserController.java       # User registration/login controller
+│   └── UserAdminController.java  # 사용자 목록/검색 페이지
 ├── domain/
 │   ├── entity/
-│   │   ├── BaseTimeEntity.java   # Base entity with timestamps
 │   │   ├── Board.java            # Board entity
-│   │   └── User.java             # User entity
-│   └── repository/
-│       ├── BoardRepository.java  # Board JPA repository
-│       └── UserRepository.java   # User JPA repository
+│   │   └── User.java             # User entity (phone, blind index 필드 포함)
+│   └── mapper/                   # MyBatis mapper 인터페이스 (annotation 기반, XML 없음)
+│       ├── BoardMapper.java
+│       └── UserMapper.java
 ├── dto/
-│   ├── BoardResponseDto.java     # Response DTO
-│   ├── BoardSaveRequestDto.java  # Save request DTO
-│   ├── BoardUpdateRequestDto.java # Update request DTO
-│   └── UserRegisterRequestDto.java # User registration DTO
+│   ├── BoardResponseDto.java, BoardSaveRequestDto.java, BoardUpdateRequestDto.java
+│   ├── UserRegisterRequestDto.java, UserResponseDto.java
 └── service/
-    ├── BoardService.java         # Board business logic
-    ├── PasswordService.java      # Password encryption (delegates entirely to vault-crypto)
-    └── UserService.java          # User business logic
+    ├── BoardService.java         # Board business logic (crypto는 TypeHandler에 위임)
+    ├── PasswordService.java      # BCrypt 해시 + blind index 계산 (vault-crypto 위임)
+    └── UserService.java          # User business logic + 검색
 
 src/main/resources/
 ├── application.properties        # Application configuration
 └── templates/                    # Thymeleaf templates
-    ├── index.html               # Main page
-    ├── list1st.html             # First page listing
-    ├── list1stonly.html         # First page only listing
+    ├── auth/                    # 로그인/회원가입
+    ├── last100.html, list1st.html, list1stonly.html  # 게시글 목록
+    ├── users/list.html          # 사용자 목록/검색
     └── posts/                   # Post-related templates
-        ├── save.html            # Save post form
-        └── update.html          # Update post form
+
+migrations/
+└── 001_add_user_phone_and_blind_index.sql  # users.phone/phone_blind_idx/id_no_blind_idx 컬럼 추가
+
+bootstrap_blind_index_keys.py     # blind index HMAC 키 생성 helper (bootstrap_kek_dek.py와 동일한 패턴)
 ```
 
 ## Prerequisites
@@ -92,15 +97,17 @@ spring.cloud.vault.fail-fast=false
 - **Mount**: `ebiz_service` (kv-v2)
 - **KEK path**: `ebiz_db/kek` — master key, only used to wrap/unwrap DEKs
 - **DEK paths**: `ebiz_db/dek/board`, `ebiz_db/dek/user-pii` — one wrapped DEK per service domain, versioned
+- **Blind index paths**: `ebiz_db/blind-index/user-phone`, `ebiz_db/blind-index/user-rrn` — one HMAC key per searchable field, unversioned (see `vault-crypto/README.md`의 "4. Blind Index")
 - **Server**: 192.168.2.57:8200
-- See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design and `bootstrap_kek_dek.py` for how these secrets are generated
+- See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch Vault themselves
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.8`) provides KEK-DEK envelope encryption and BCrypt password hashing (`PasswordHasher`) - all password-related crypto lives in the library, not in demoApp
-2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`); each unwraps its DEK from Vault once at startup and caches it in memory
-3. `PasswordService` delegates to the domain-specific `EnvelopeCryptoService` for encrypt/decrypt/validate — no legacy fallback, no Vault call per request
-4. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB
-5. Python decryption script (`decrypt_passwords.py`) only understands the old single-key format now, unrelated to how the app currently encrypts
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.9`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
+2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from Vault once at startup and caches it in memory
+3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because ~46k legacy rows predate the envelope format and would break ordinary list/view reads if decrypted on every `SELECT`; `users.id_no`/`phone` are wired both ways since that table has no legacy data
+4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
+5. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB; phone/RRN additionally get a deterministic HMAC in a companion `*_blind_idx` column for exact-match search
+6. Python decryption script (`decrypt_passwords.py`) only understands the old single-key format now, unrelated to how the app currently encrypts
 
 ### vault-crypto Package
 Encryption functionality is extracted into a separate package:
@@ -163,7 +170,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.15.jar
+   java -jar build/libs/xaandemo-0.0.16.jar
    ```
 
 3. **Access the application:**
@@ -214,20 +221,22 @@ CREATE TABLE ebiz.board (
 
 ## Security Features
 
-1. **Password Encryption**:
-   - **사용자 비밀번호**: BCrypt 단방향 해시 (`vault-crypto`의 `PasswordHasher`)
-   - **게시글 비밀번호 / 개인정보**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
-   - Implementation: `PasswordService.java`는 두 크립토 프리미티브 모두 `vault-crypto`에 위임 - 도메인별 `EnvelopeCryptoService`(via `CryptoConfig`) + `PasswordHasher`. demoApp 코드에는 암호화/해시 관련 라이브러리 의존성이 남아있지 않음
+1. **Password/PII Encryption**:
+   - **로그인 비밀번호**: BCrypt 단방향 해시 (`vault-crypto`의 `PasswordHasher`)
+   - **게시글 비밀번호 / 주민등록번호 / 전화번호**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
+   - Implementation: 암/복호화는 MyBatis `TypeHandler`(`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`)가 Mapper 컬럼 단위로 투명하게 처리 - `BoardService`/`UserService`는 평문만 다루고 `vault-crypto`를 직접 호출하지 않음. `PasswordService.java`는 BCrypt 해시/검증, board 비밀번호 `validate()`, blind index 계산만 남아 있음
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음). BCrypt는 외부 키가 필요 없어 Vault와 무관
-   - Package: `com.xaan:vault-crypto:0.0.8`
+   - Package: `com.xaan:vault-crypto:0.0.9`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
 
-2. **Vault Integration**: External secrets management with Spring Cloud Vault
+2. **암호화된 컬럼 검색 (Blind Index)**: 전화번호/주민등록번호는 AES-GCM이라 등호 검색이 불가능하므로, HMAC-SHA256 기반 결정적 인덱스(`phone_blind_idx`/`id_no_blind_idx`)를 별도 컬럼에 저장 - `/users` 검색이 이 컬럼을 조회한다. 정확히 일치하는 값만 찾을 수 있고(부분 검색 불가), DEK/KEK와 무관한 별도 키를 씀(`vault-crypto`의 `BlindIndexService`)
+
+3. **Vault Integration**: External secrets management with Spring Cloud Vault
    - Configured to connect to Vault server at `http://192.168.2.57:8200`
    - Fail-fast enabled for production safety
-3. **Input Validation**: Server-side validation (주민등록번호 체크섬 검증 포함)
-4. **SQL Injection Protection**: Using JPA prepared statements
+4. **Input Validation**: Server-side validation (주민등록번호 체크섬 검증, 전화번호 숫자만 허용 포함)
+5. **SQL Injection Protection**: Using MyBatis prepared statement bind parameters (`#{...}`)
 
 ## Deployment
 
@@ -253,14 +262,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.15.jar app.jar
+COPY build/libs/xaandemo-0.0.16.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.15.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.15.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.16.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.16.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -286,6 +295,20 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.16 (2026-08-26)
+
+**Encryption moved onto MyBatis TypeHandlers + phone number field with blind index search.** Four related changes, all building on the JPA→MyBatis migration:
+
+**Changes:**
+- **`vault-crypto` bumped to `0.0.9`** - adds `EnvelopeCryptoTypeHandler` (MyBatis) and `BlindIndexService`/`BlindIndexKeyProvider` (blind index). See vault-crypto's own Release History for details
+- **TypeHandler adoption**: `config/mybatis/BoardPasswordTypeHandler`/`UserPiiTypeHandler` now handle encryption at the Mapper boundary. `BoardService`/`UserService` no longer call `PasswordService.encrypt*()`/`decrypt*()` at all - they pass/receive plain strings and `BoardMapper`/`UserMapper`'s SQL does the rest. `board.password` stays write-side-only (see `BoardMapper`'s comment - ~46k legacy rows would break every ordinary read otherwise); `users.id_no`/`phone` are wired both ways (no legacy data in that table)
+- **`users.phone` added** (AES-GCM encrypted, `user-pii` domain - same DEK as RRN): collected at registration (`auth/register.html` gained a phone field, digits-only enforced client-side via `oninput` stripping non-digits, `\d{9,11}` pattern) and validated server-side in `UserService.register()`
+- **Blind index search**: `users.phone_blind_idx`/`id_no_blind_idx` columns hold a deterministic HMAC-SHA256 of the phone/RRN, computed by `PasswordService.computePhoneBlindIndex()`/`computeRrnBlindIndex()`. New `/users` page (`UserAdminController`, `users/list.html`) lets you search by 이름 (LIKE, plaintext), 전화번호/주민등록번호 (exact match against the blind index column) - the search inputs also strip non-digits client-side
+- New `migrations/001_add_user_phone_and_blind_index.sql` (not run automatically - MyBatis has no `ddl-auto`, apply by hand) and `bootstrap_blind_index_keys.py` (prints `vault kv put` commands for the two blind-index HMAC keys, same non-executing pattern as `bootstrap_kek_dek.py`)
+- `DekReencryptionService`/`UserMapper`/`BoardMapper` gained `*Raw` variants (`findAllRaw`, `updatePasswordRaw`, `updateResidentRegistrationNumberRaw`) so the DEK-rotation reencryption batch can still read/write raw ciphertext directly, bypassing the now-auto-encrypting TypeHandler (which would otherwise double-encrypt an already-encrypted value read back through it)
+- `PasswordServiceTest` rewritten to match the narrower `PasswordService` API (dropped `encryptBoardPassword`/`decryptBoardPassword`/`encryptUserPii`/`decryptUserPii`, all now unused since the TypeHandlers took over; added blind index coverage)
+- **Not yet deployed**: needs `migrations/001_...sql` applied to the production DB and `bootstrap_blind_index_keys.py`'s output run against Vault first - the blind index beans fail fast at startup (same as KEK/DEK) if their Vault secrets don't exist yet
 
 ### v0.0.15 (2026-08-26)
 

@@ -70,8 +70,7 @@ public class DekReencryptionService {
                     continue;
                 }
                 String plain = boardCryptoService.decrypt(password);
-                board.updatePassword(boardCryptoService.encrypt(plain));
-                boardMapper.updatePassword(board.getId(), board.getPassword());
+                boardMapper.updatePasswordRaw(board.getId(), boardCryptoService.encrypt(plain));
                 migrated++;
             } catch (CryptoException e) {
                 notEnvelopeFormat++;
@@ -85,7 +84,7 @@ public class DekReencryptionService {
 
     @Transactional
     public MigrationResult reencryptUserPii() {
-        List<User> users = userMapper.findAll();
+        List<User> users = userMapper.findAllRaw();
         int migrated = 0;
         int skipped = 0;
         int notEnvelopeFormat = 0;
@@ -102,8 +101,7 @@ public class DekReencryptionService {
                     continue;
                 }
                 String plain = userPiiCryptoService.decrypt(rrn);
-                user.updateResidentRegistrationNumber(userPiiCryptoService.encrypt(plain));
-                userMapper.updateResidentRegistrationNumber(user.getId(), user.getResidentRegistrationNumber());
+                userMapper.updateResidentRegistrationNumberRaw(user.getId(), userPiiCryptoService.encrypt(plain));
                 migrated++;
             } catch (CryptoException e) {
                 notEnvelopeFormat++;

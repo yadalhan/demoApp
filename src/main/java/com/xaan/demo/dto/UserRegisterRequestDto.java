@@ -13,6 +13,7 @@ public class UserRegisterRequestDto {
     private String username;
     private String residentRegistrationNumberFront;
     private String residentRegistrationNumberBack;
+    private String phone;
 
     public String getResidentRegistrationNumber() {
         return residentRegistrationNumberFront + residentRegistrationNumberBack;

@@ -42,11 +42,12 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public String register(@RequestParam String userId, 
-                           @RequestParam String username, 
+    public String register(@RequestParam String userId,
+                           @RequestParam String username,
                            @RequestParam String password,
                            @RequestParam String residentRegistrationNumberFront,
                            @RequestParam String residentRegistrationNumberBack,
+                           @RequestParam String phone,
                            HttpServletResponse response,
                            Model model) {
         try {
@@ -56,6 +57,7 @@ public class AuthController {
             dto.setPassword(password);
             dto.setResidentRegistrationNumberFront(residentRegistrationNumberFront);
             dto.setResidentRegistrationNumberBack(residentRegistrationNumberBack);
+            dto.setPhone(phone);
             userService.register(dto);
             return "redirect:/login?registered";
         } catch (IllegalArgumentException e) {

@@ -1,5 +1,8 @@
 package com.xaan.demo.config;
 
+import com.xaan.vault.crypto.blindindex.BlindIndexKeyProvider;
+import com.xaan.vault.crypto.blindindex.BlindIndexService;
+import com.xaan.vault.crypto.blindindex.VaultBlindIndexKeyProvider;
 import com.xaan.vault.crypto.envelope.DekProvider;
 import com.xaan.vault.crypto.envelope.DekRotationSupport;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
@@ -64,5 +67,23 @@ public class CryptoConfig {
     @Bean
     public KekRotationSupport kekRotationSupport(KekProvider kekProvider) {
         return new KekRotationSupport(kekProvider);
+    }
+
+    @Bean
+    public BlindIndexKeyProvider blindIndexKeyProvider(
+            VaultOperations vaultOperations,
+            @Value("${vault.blind-index.base-path:ebiz_service/data/ebiz_db/blind-index}") String basePath) {
+        return new VaultBlindIndexKeyProvider(vaultOperations, basePath);
+    }
+
+    // 전화번호/주민등록번호 검색용 - 필드마다 독립된 HMAC 키를 쓰므로 도메인 코드 없이 문자열 이름으로 구분
+    @Bean
+    public BlindIndexService phoneBlindIndexService(BlindIndexKeyProvider blindIndexKeyProvider) {
+        return BlindIndexService.forIndex("user-phone", blindIndexKeyProvider);
+    }
+
+    @Bean
+    public BlindIndexService rrnBlindIndexService(BlindIndexKeyProvider blindIndexKeyProvider) {
+        return BlindIndexService.forIndex("user-rrn", blindIndexKeyProvider);
     }
 }
