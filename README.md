@@ -31,7 +31,7 @@ src/main/java/com/xaan/demo/
 │   ├── BoardApiController.java   # REST API controller
 │   ├── IndexController.java      # Main page controller
 │   ├── Top100IndexController.java # Top 100 listings controller
-│   └── UserAdminController.java  # 사용자 목록/검색 페이지
+│   └── UserAdminController.java  # 사용자 목록/검색 페이지 (/users 실시간, /users2 Redis 캐시)
 ├── domain/
 │   ├── entity/
 │   │   ├── Board.java            # Board entity
@@ -52,7 +52,8 @@ src/main/resources/
 └── templates/                    # Thymeleaf templates
     ├── auth/                    # 로그인/회원가입
     ├── last100.html, list1st.html, list1stonly.html  # 게시글 목록
-    ├── users/list.html          # 사용자 목록/검색
+    ├── users/list.html          # 사용자 목록/검색 (실시간 조회)
+    ├── users/list2.html         # 사용자 목록2 (Redis 캐시, /users와 동일한 화면)
     └── posts/                   # Post-related templates
 
 migrations/
@@ -173,7 +174,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.17.jar
+   java -jar build/libs/xaandemo-0.0.18.jar
    ```
 
 3. **Access the application:**
@@ -265,14 +266,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.17.jar app.jar
+COPY build/libs/xaandemo-0.0.18.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.17.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.17.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.18.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.18.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -298,6 +299,19 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.18 (2026-08-29)
+
+**사용자 목록2 (`/users2`) - Redis 캐시를 쓰면서도 캐시에는 절대 복호화된 개인정보를 올리지 않는 예제.** `/users`와 화면·검색 조건은 동일하지만, DB 조회 결과를 Redis에 캐싱한다.
+
+**설계**: Redis(`spring.cache.type=redis`)에 올라가는 값은 `UserMapper.search()`가 반환하는 **암호문 그대로의** `User` 목록뿐이다 - `UserService.searchRawCached(...)`가 `@Cacheable("userSearchRaw")`로 이 raw 조회만 캐싱한다. 복호화(`PasswordService.decryptUserPiiForDisplay(...)`)는 캐시 적중 여부와 무관하게 `UserService.searchCached(...)`가 **캐시에서 꺼낸 뒤 매번** 수행하므로, Redis 서버/네트워크 어디에도 평문 주민등록번호·전화번호가 노출되지 않는다.
+
+**Changes:**
+- `User` 엔티티에 `Serializable` 추가 (Redis 캐시 값 직렬화에 필요 - 캐시에 담기는 필드는 항상 ciphertext뿐)
+- `UserService.searchRawCached(name, phoneBlindIndex, rrnBlindIndex)` 추가 (`@Cacheable(value = "userSearchRaw")`, raw ciphertext만 반환), `searchCached(...)`가 이를 호출한 뒤 행별 복호화
+- `UserService.register()`에 `@CacheEvict(value = "userSearchRaw", allEntries = true)` 추가 - 안 그러면 방금 가입한 사용자가 TTL(5분) 동안 검색 결과에 안 보임
+- `UserAdminController`에 `GET /users2` 추가, 신규 템플릿 `users/list2.html`은 `/users`와 완전히 동일한 레이아웃/검색 조건/마스킹 - 폼 action만 `/users2`
+- 두 목록 페이지 상단에 서로를 오가는 버튼 추가
 
 ### v0.0.17 (2026-08-29) — critical fix for v0.0.16
 

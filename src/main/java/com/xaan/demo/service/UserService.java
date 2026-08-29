@@ -5,6 +5,8 @@ import com.xaan.demo.domain.mapper.UserMapper;
 import com.xaan.demo.dto.UserRegisterRequestDto;
 import com.xaan.demo.dto.UserResponseDto;
 import lombok.RequiredArgsConstructor;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,9 @@ public class UserService {
     private final UserMapper userMapper;
     private final PasswordService passwordService;
 
+    // 신규 가입자가 어떤 검색 조합에든 걸릴 수 있으므로 캐시된 검색 결과 전체를 무효화한다 -
+    // 그렇지 않으면 /users2에서 방금 가입한 사용자가 TTL 동안 보이지 않게 된다.
+    @CacheEvict(value = "userSearchRaw", allEntries = true)
     @Transactional
     public Long register(UserRegisterRequestDto dto) {
         if (dto.getUserId() == null || dto.getUserId().isEmpty()) {
@@ -93,6 +98,32 @@ public class UserService {
                         passwordService.decryptUserPiiForDisplay(user.getResidentRegistrationNumber()),
                         passwordService.decryptUserPiiForDisplay(user.getPhone())))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 사용자 검색(Redis 캐시 적용판, 사용자목록2/{@code /users2}) - 조회 조건은 search()와 동일하지만
+     * DB 조회 결과를 Redis에 캐싱한다. 캐시에는 searchRawCached()가 반환하는, id_no/phone이
+     * ciphertext 그대로인 User 목록만 저장된다 - 복호화는 캐시에서 꺼낸 뒤 이 메서드가 매번 수행하므로,
+     * 캐시 적중 여부와 무관하게 Redis에는 평문 개인정보가 절대 올라가지 않는다.
+     */
+    public List<UserResponseDto> searchCached(String name, String phone, String residentRegistrationNumber) {
+        String phoneBlindIndex = (phone == null || phone.isEmpty())
+                ? null : passwordService.computePhoneBlindIndex(normalizePhone(phone));
+        String rrnBlindIndex = (residentRegistrationNumber == null || residentRegistrationNumber.isEmpty())
+                ? null : passwordService.computeRrnBlindIndex(residentRegistrationNumber);
+        return searchRawCached(name, phoneBlindIndex, rrnBlindIndex).stream()
+                .map(user -> new UserResponseDto(
+                        user,
+                        passwordService.decryptUserPiiForDisplay(user.getResidentRegistrationNumber()),
+                        passwordService.decryptUserPiiForDisplay(user.getPhone())))
+                .collect(Collectors.toList());
+    }
+
+    // 캐싱 대상은 반드시 이 raw 조회여야 한다 - userMapper.search()가 id_no/phone을 복호화하지 않고
+    // 그대로 반환하므로(UserMapper 주석 참고), Redis에 저장되는 값도 항상 ciphertext뿐이다.
+    @Cacheable(value = "userSearchRaw", key = "(#name ?: '') + '|' + (#phoneBlindIndex ?: '') + '|' + (#rrnBlindIndex ?: '')")
+    public List<User> searchRawCached(String name, String phoneBlindIndex, String rrnBlindIndex) {
+        return userMapper.search(name, phoneBlindIndex, rrnBlindIndex);
     }
 
     public Optional<User> findByUserId(String userId) {

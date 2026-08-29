@@ -32,4 +32,22 @@ public class UserAdminController {
         model.addAttribute("residentRegistrationNumber", residentRegistrationNumber);
         return "users/list";
     }
+
+    // 사용자 목록2 - /users와 동일하지만 조회 결과를 Redis에 캐싱한다(ciphertext만 캐싱, 복호화는
+    // 매번 캐시 조회 이후 수행 - UserService.searchCached() 참고).
+    @GetMapping("/users2")
+    public String listCached(@RequestParam(required = false) String name,
+                              @RequestParam(required = false) String phone,
+                              @RequestParam(required = false) String residentRegistrationNumber,
+                              Model model, HttpSession session) {
+        if (session.getAttribute("loginUser") == null) {
+            return "redirect:/login";
+        }
+        List<UserResponseDto> users = userService.searchCached(name, phone, residentRegistrationNumber);
+        model.addAttribute("users", users);
+        model.addAttribute("name", name);
+        model.addAttribute("phone", phone);
+        model.addAttribute("residentRegistrationNumber", residentRegistrationNumber);
+        return "users/list2";
+    }
 }

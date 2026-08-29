@@ -4,9 +4,14 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import java.io.Serializable;
+
+// Serializable - Redis 캐싱(UserService.searchRawCached, 사용자목록2)에서 기본 JDK 직렬화로
+// 값을 저장하려면 필요하다. 캐시에 담기는 값은 항상 id_no/phone이 ciphertext 상태인 User 객체뿐이다
+// (UserMapper.search()가 그렇게 반환함) - 복호화된 평문은 캐시 이후 단계에서만 만들어진다.
 @Getter
 @NoArgsConstructor
-public class User {
+public class User implements Serializable {
     private Long id;
 
     private String userId;
