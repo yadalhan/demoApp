@@ -74,12 +74,15 @@ The application uses the following configuration in `application.properties`:
 
 ```properties
 spring.application.name=demo
-spring.jpa.database=postgresql
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.show-sql=true
 spring.datasource.url=jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/limadb?currentSchema=${DB_SCHEMA:ebiz}
 spring.datasource.username=${DB_USERNAME:postgres}
 spring.datasource.password=${DB_PASSWORD:changeme}
+
+# Required - without this, any snake_case DB column with no explicit @Result mapping in a
+# mapper (user_id, created_date, modified_date, ...) silently comes back null instead of
+# mapping to its camelCase Java property. No error, just a blank field - found the hard way
+# via a blank "사용자 ID" column on /users and a blank "최종수정일" on the board lists.
+mybatis.configuration.map-underscore-to-camel-case=true
 ```
 
 ### Vault Configuration (Updated 2026-05-07)
