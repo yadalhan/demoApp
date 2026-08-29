@@ -77,6 +77,10 @@ public class UserService {
     /**
      * 사용자 검색 - 이름은 부분 일치, 전화번호/주민등록번호는 blind index를 통한 정확 일치.
      * 검색어가 모두 비어 있으면 전체 목록을 반환한다.
+     *
+     * <p>userMapper.search()는 id_no/phone을 ciphertext 그대로 돌려준다(UserMapper 주석 참고) -
+     * 여기서 행별로 개별 복호화를 시도해, 한 행의 ciphertext에 문제가 있어도 그 행만 표시를 대체하고
+     * 나머지 행은 정상적으로 보여준다.
      */
     public List<UserResponseDto> search(String name, String phone, String residentRegistrationNumber) {
         String phoneBlindIndex = (phone == null || phone.isEmpty())
@@ -84,7 +88,10 @@ public class UserService {
         String rrnBlindIndex = (residentRegistrationNumber == null || residentRegistrationNumber.isEmpty())
                 ? null : passwordService.computeRrnBlindIndex(residentRegistrationNumber);
         return userMapper.search(name, phoneBlindIndex, rrnBlindIndex).stream()
-                .map(UserResponseDto::new)
+                .map(user -> new UserResponseDto(
+                        user,
+                        passwordService.decryptUserPiiForDisplay(user.getResidentRegistrationNumber()),
+                        passwordService.decryptUserPiiForDisplay(user.getPhone())))
                 .collect(Collectors.toList());
     }
 
@@ -121,10 +128,12 @@ public class UserService {
     }
 
     /**
-     * 로그인 검증 - BCrypt 사용
+     * 로그인 검증 - BCrypt 사용. id_no/phone은 필요 없으므로 findAuthByUserId로 조회한다 -
+     * 그 컬럼들을 복호화하는 findByUserId를 썼다면, PII ciphertext 문제 하나가 이 계정의
+     * 로그인 자체를 막아버리게 된다(비밀번호가 맞아도 로그인 불가).
      */
     public boolean validateLogin(String userId, String rawPassword) {
-        Optional<User> userOpt = userMapper.findByUserId(userId);
+        Optional<User> userOpt = userMapper.findAuthByUserId(userId);
         if (userOpt.isEmpty()) {
             return false;
         }

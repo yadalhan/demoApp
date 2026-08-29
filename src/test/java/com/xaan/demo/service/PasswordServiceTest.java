@@ -19,8 +19,8 @@ class PasswordServiceTest {
 
     @Test
     void validateBoardPasswordAcceptsTheCorrectPassword() {
-        EnvelopeCryptoService boardCryptoService = newBoardCryptoService();
-        PasswordService passwordService = newPasswordService(boardCryptoService);
+        EnvelopeCryptoService boardCryptoService = newCryptoService("board", (byte) 1);
+        PasswordService passwordService = newPasswordService(boardCryptoService, newCryptoService("user-pii", (byte) 2));
 
         String encrypted = boardCryptoService.encrypt("900101123456");
 
@@ -32,7 +32,8 @@ class PasswordServiceTest {
     void preEnvelopeCiphertextFailsValidationInsteadOfThrowing() {
         // Legacy migration/compatibility was dropped: old single-key ciphertext is now
         // just unreadable noise rather than something the app falls back to decrypting.
-        PasswordService passwordService = newPasswordService(newBoardCryptoService());
+        PasswordService passwordService = newPasswordService(
+                newCryptoService("board", (byte) 1), newCryptoService("user-pii", (byte) 2));
         String legacyLookingCiphertext = "JrwIlNN9YVMIxpqWvYhlNGfd7CUf1wjOgXAHLRIf0io=";
 
         assertThat(passwordService.validateBoardPassword("anything", legacyLookingCiphertext)).isFalse();
@@ -40,7 +41,8 @@ class PasswordServiceTest {
 
     @Test
     void blindIndexIsDeterministicAndFieldsAreIndependent() {
-        PasswordService passwordService = newPasswordService(newBoardCryptoService());
+        PasswordService passwordService = newPasswordService(
+                newCryptoService("board", (byte) 1), newCryptoService("user-pii", (byte) 2));
 
         assertThat(passwordService.computePhoneBlindIndex("01012345678"))
                 .isEqualTo(passwordService.computePhoneBlindIndex("01012345678"));
@@ -48,18 +50,51 @@ class PasswordServiceTest {
                 .isNotEqualTo(passwordService.computeRrnBlindIndex("01012345678"));
     }
 
-    private PasswordService newPasswordService(EnvelopeCryptoService boardCryptoService) {
+    @Test
+    void decryptUserPiiForDisplayReturnsThePlaintextOnSuccess() {
+        EnvelopeCryptoService userPiiCryptoService = newCryptoService("user-pii", (byte) 2);
+        PasswordService passwordService = newPasswordService(newCryptoService("board", (byte) 1), userPiiCryptoService);
+
+        String encrypted = userPiiCryptoService.encrypt("900101-1234567");
+
+        assertThat(passwordService.decryptUserPiiForDisplay(encrypted)).isEqualTo("900101-1234567");
+    }
+
+    @Test
+    void decryptUserPiiForDisplayFallsBackInsteadOfThrowing() {
+        // Simulates exactly the production incident this guards against: one row's PII
+        // ciphertext no longer matches the currently-loaded DEK (e.g. stale from before a
+        // key was regenerated). A list screen showing many rows must not crash entirely
+        // because of one bad row.
+        PasswordService passwordService = newPasswordService(
+                newCryptoService("board", (byte) 1), newCryptoService("user-pii", (byte) 2));
+        String undecryptableCiphertext = "JrwIlNN9YVMIxpqWvYhlNGfd7CUf1wjOgXAHLRIf0io=";
+
+        assertThat(passwordService.decryptUserPiiForDisplay(undecryptableCiphertext)).isEqualTo("(복호화 실패)");
+    }
+
+    @Test
+    void decryptUserPiiForDisplayPassesNullAndEmptyThrough() {
+        PasswordService passwordService = newPasswordService(
+                newCryptoService("board", (byte) 1), newCryptoService("user-pii", (byte) 2));
+
+        assertThat(passwordService.decryptUserPiiForDisplay(null)).isNull();
+        assertThat(passwordService.decryptUserPiiForDisplay("")).isEmpty();
+    }
+
+    private PasswordService newPasswordService(EnvelopeCryptoService boardCryptoService, EnvelopeCryptoService userPiiCryptoService) {
         return new PasswordService(
                 boardCryptoService,
+                userPiiCryptoService,
                 BlindIndexService.withKey(randomBytes(32)),
                 BlindIndexService.withKey(randomBytes(32)));
     }
 
-    private EnvelopeCryptoService newBoardCryptoService() {
+    private EnvelopeCryptoService newCryptoService(String domain, byte domainCode) {
         KekService kek = new KekService(randomBytes(32));
         InMemoryDekProvider dekProvider = new InMemoryDekProvider();
-        seedDek(kek, dekProvider, "board", 1);
-        return EnvelopeCryptoService.forDomain((byte) 1, "board", kek, dekProvider);
+        seedDek(kek, dekProvider, domain, 1);
+        return EnvelopeCryptoService.forDomain(domainCode, domain, kek, dekProvider);
     }
 
     private static void seedDek(KekService kek, InMemoryDekProvider dekProvider, String domain, int version) {

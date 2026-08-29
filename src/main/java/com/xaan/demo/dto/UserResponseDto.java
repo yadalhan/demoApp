@@ -11,11 +11,11 @@ public class UserResponseDto {
     private final String residentRegistrationNumber;
     private final String phone;
 
-    public UserResponseDto(User entity) {
+    public UserResponseDto(User entity, String decryptedResidentRegistrationNumber, String decryptedPhone) {
         this.id = entity.getId();
         this.userId = entity.getUserId();
         this.username = entity.getUsername();
-        this.residentRegistrationNumber = entity.getResidentRegistrationNumber();
-        this.phone = entity.getPhone();
+        this.residentRegistrationNumber = decryptedResidentRegistrationNumber;
+        this.phone = decryptedPhone;
     }
 }

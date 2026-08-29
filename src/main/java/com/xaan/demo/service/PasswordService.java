@@ -15,15 +15,18 @@ public class PasswordService {
 
     private final PasswordHasher passwordHasher;
     private final EnvelopeCryptoService boardCryptoService;
+    private final EnvelopeCryptoService userPiiCryptoService;
     private final BlindIndexService phoneBlindIndexService;
     private final BlindIndexService rrnBlindIndexService;
 
     public PasswordService(
             @Qualifier("boardCryptoService") EnvelopeCryptoService boardCryptoService,
+            @Qualifier("userPiiCryptoService") EnvelopeCryptoService userPiiCryptoService,
             @Qualifier("phoneBlindIndexService") BlindIndexService phoneBlindIndexService,
             @Qualifier("rrnBlindIndexService") BlindIndexService rrnBlindIndexService) {
         this.passwordHasher = new PasswordHasher();
         this.boardCryptoService = boardCryptoService;
+        this.userPiiCryptoService = userPiiCryptoService;
         this.phoneBlindIndexService = phoneBlindIndexService;
         this.rrnBlindIndexService = rrnBlindIndexService;
         logger.info("PasswordService initialized with KEK-DEK envelope encryption (board domain) and blind index support (phone, rrn)");
@@ -65,6 +68,25 @@ public class PasswordService {
      */
     public String computePhoneBlindIndex(String phone) {
         return phoneBlindIndexService.compute(phone);
+    }
+
+    /**
+     * 목록/검색 화면 표시 전용 복호화 - 실패해도 예외를 던지지 않고 대체 문자열을 반환한다.
+     * 여러 행을 한 번에 보여주는 화면(UserService.search() 등)에서, 한 행의 ciphertext가
+     * 현재 로드된 DEK와 맞지 않아도(예: 과거 키 재발급으로 무효화된 값) 그 행만 표시를 대체하고
+     * 나머지 행은 정상적으로 보여주기 위한 것 - 단일 레코드 조회(회원가입 직후 확인 등)처럼
+     * 실패를 곧바로 알아야 하는 곳에는 쓰지 않는다.
+     */
+    public String decryptUserPiiForDisplay(String encryptedText) {
+        if (encryptedText == null || encryptedText.isEmpty()) {
+            return encryptedText;
+        }
+        try {
+            return userPiiCryptoService.decrypt(encryptedText);
+        } catch (RuntimeException e) {
+            logger.warn("Failed to decrypt user-pii value for display: {}", e.getMessage());
+            return "(복호화 실패)";
+        }
     }
 
     /**
