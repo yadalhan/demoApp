@@ -234,6 +234,7 @@ CREATE TABLE ebiz.board (
    - Package: `com.xaan:vault-crypto:0.0.10`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
+   - 암호화 컬럼을 다루는 조회/조회 코드를 새로 짤 때는 [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md) 참고 - 단건/목록/검색/캐싱 상황별 패턴과, 실제로 겪었던 실수(이중 암호화, 캐시에 평문 노출, self-invocation 등) 정리
 
 2. **암호화된 컬럼 검색 (Blind Index)**: 전화번호/주민등록번호는 AES-GCM이라 등호 검색이 불가능하므로, HMAC-SHA256 기반 결정적 인덱스(`phone_blind_idx`/`id_no_blind_idx`)를 별도 컬럼에 저장 - `/users` 검색이 이 컬럼을 조회한다. 정확히 일치하는 값만 찾을 수 있고(부분 검색 불가), DEK/KEK와 무관한 별도 키를 씀(`vault-crypto`의 `BlindIndexService`)
 
