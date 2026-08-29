@@ -102,7 +102,7 @@ spring.cloud.vault.fail-fast=false
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch Vault themselves
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.9`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.10`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from Vault once at startup and caches it in memory
 3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because ~46k legacy rows predate the envelope format and would break ordinary list/view reads if decrypted on every `SELECT`; `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
@@ -170,7 +170,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.16.jar
+   java -jar build/libs/xaandemo-0.0.17.jar
    ```
 
 3. **Access the application:**
@@ -226,7 +226,7 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 주민등록번호 / 전화번호**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: 암/복호화는 MyBatis `TypeHandler`(`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`)가 Mapper 컬럼 단위로 투명하게 처리 - `BoardService`/`UserService`는 평문만 다루고 `vault-crypto`를 직접 호출하지 않음. `PasswordService.java`는 BCrypt 해시/검증, board 비밀번호 `validate()`, blind index 계산만 남아 있음
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음). BCrypt는 외부 키가 필요 없어 Vault와 무관
-   - Package: `com.xaan:vault-crypto:0.0.9`
+   - Package: `com.xaan:vault-crypto:0.0.10`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
 
@@ -262,14 +262,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.16.jar app.jar
+COPY build/libs/xaandemo-0.0.17.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.16.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.16.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.17.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.17.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -295,6 +295,16 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.17 (2026-08-29) — critical fix for v0.0.16
+
+**Login/registration broken in production: `EnvelopeCryptoTypeHandler` (from vault-crypto 0.0.9, added in v0.0.16) was silently encrypting every plain `String` column in the app, not just the ones it was assigned to.** Reported as "login이 안됨"; reproduced via a fresh `/register` call, which threw `PSQLException: value too long for type character varying(50)` on `users.user_id` - the plain `#{userId}` parameter (no `typeHandler=` attribute) had been AES-GCM encrypted. Same silent behavior would have applied to `board.title`/`content`/`author` on every new post (no visible error there, since those columns aren't length-constrained enough to overflow - meaning it could have corrupted data with no error at all).
+
+**Root cause**: `BaseTypeHandler<T>` (which `EnvelopeCryptoTypeHandler` extended) also extends `TypeReference<T>`, which MyBatis's `TypeHandlerRegistry.register(TypeHandler)` - the exact method Spring Boot's MyBatis auto-configuration calls for every `TypeHandler` bean - uses to auto-discover a mapped Java type when no `@MappedTypes` is present. That made `BoardPasswordTypeHandler`/`UserPiiTypeHandler` MyBatis's default handler for the entire `String` type app-wide, not scoped to their intended columns.
+
+**Fix**: vault-crypto `0.0.9 → 0.0.10` - `EnvelopeCryptoTypeHandler` now implements the bare `TypeHandler<String>` interface directly instead of extending `BaseTypeHandler`, so the auto-discovery path never fires. See vault-crypto's own Release History for the full writeup and the new regression test. demoApp's `BoardPasswordTypeHandler`/`UserPiiTypeHandler` needed no code changes beyond the dependency bump.
+
+**Verified live**: confirmed `/register` failed before the fix; after deploying v0.0.17, confirmed `/register` succeeds, `/login` with the new account reaches the authenticated page, and a REST-created board post's `title`/`content`/`author` are stored as plaintext (checked directly via `psql`). No real user/board data was created during the ~20-minute window the bug was live in production - only this session's own test rows, which were deleted.
 
 ### v0.0.16 (2026-08-26)
 
