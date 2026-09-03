@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Set environment variables
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export GRADLE_HOME=/opt/gradle/gradle-8.14.5
 export PATH=$GRADLE_HOME/bin:$PATH
 

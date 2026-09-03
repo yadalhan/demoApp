@@ -7,7 +7,7 @@ PROD_SERVER="192.168.2.57"
 PROD_USER="xaan"
 PROD_APP_DIR="/home/xaan/ws/demoBBS/app"
 PROD_BASE_DIR="/home/xaan/ws/demoBBS"
-JAR_VERSION="0.0.18"
+JAR_VERSION="0.0.19"
 JAR_BASENAME="xaandemo-${JAR_VERSION}.jar"
 JAR_FILE="build/libs/${JAR_BASENAME}"
 PROD_LINK_NAME="xaandemo-prod.jar"
@@ -25,7 +25,7 @@ echo -e "demoApp Deployment Script"
 echo -e "========================================${NC}"
 
 echo -e "\n${YELLOW}[Step 0/4] Building application...${NC}"
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 
 if ! gradle clean build -x test; then

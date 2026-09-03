@@ -193,7 +193,7 @@ implementation 'org.springframework.security:spring-security-crypto'
 ### 1. Java 빌드 및 배포
 
 ```bash
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 
 cd /home/xaan/projects/oc/demoApp

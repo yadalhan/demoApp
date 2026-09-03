@@ -4,7 +4,7 @@ A Spring Boot demo application with comprehensive features for board/article man
 
 ## Features
 
-- **Spring Boot 3.4.0** with Java 17
+- **Spring Boot 3.4.0** with Java 21
 - **PostgreSQL** database integration
 - **MyBatis** for data persistence (annotation-mapped mappers, no JPA/Hibernate)
 - **Thymeleaf** templating engine for server-side rendering
@@ -65,7 +65,7 @@ bootstrap_blind_index_keys.py     # blind index HMAC 키 생성 helper (bootstra
 
 ## Prerequisites
 
-- Java 17 or higher
+- Java 21 or higher
 - Gradle 8.7 or higher
 - PostgreSQL database (optional - can use H2 for development)
 - HashiCorp Vault (optional - for production secrets management)
@@ -107,7 +107,7 @@ spring.cloud.vault.fail-fast=false
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch Vault themselves
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.10`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
+1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.11`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from Vault once at startup and caches it in memory
 3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because ~46k legacy rows predate the envelope format and would break ordinary list/view reads if decrypted on every `SELECT`; `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
@@ -140,13 +140,13 @@ vault kv get -mount=ebiz_service ebiz_db/data-enc-key
 ## Building the Project
 
 > **⚠️ Build Environment Notes:**
-> - **Windows**: `JAVA_HOME=C:\SW\jdk-17.0.15`, `GRADLE_HOME=C:\SW\gradle-8.14.5\bin`
-> - **Linux**: `JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`, `GRADLE_HOME=/opt/gradle/gradle-8.7`
+> - **Windows**: `JAVA_HOME=C:\SW\jdk-21.0.8`, `GRADLE_HOME=C:\SW\gradle-8.14.5\bin`
+> - **Linux**: `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`, `GRADLE_HOME=/opt/gradle/gradle-8.7`
 > - Always set JAVA_HOME before building, or use the provided scripts.
 
 ### Windows (Recommended):
 ```bat
-set JAVA_HOME=C:\SW\jdk-17.0.15
+set JAVA_HOME=C:\SW\jdk-21.0.8
 set PATH=%JAVA_HOME%\bin;C:\SW\gradle-8.14.5\bin;%PATH%
 
 REM Build (deploy.bat handles build + deploy)
@@ -158,7 +158,7 @@ gradle.bat clean build
 
 ### Linux:
 ```bash
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 ./gradlew clean build
@@ -168,14 +168,14 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 1. **Build the JAR:**
    ```bash
-   export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+   export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
    export PATH=$JAVA_HOME/bin:$PATH
    ./gradlew clean build
    ```
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.18.jar
+   java -jar build/libs/xaandemo-0.0.19.jar
    ```
 
 3. **Access the application:**
@@ -231,10 +231,11 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 주민등록번호 / 전화번호**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: 암/복호화는 MyBatis `TypeHandler`(`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`)가 Mapper 컬럼 단위로 투명하게 처리 - `BoardService`/`UserService`는 평문만 다루고 `vault-crypto`를 직접 호출하지 않음. `PasswordService.java`는 BCrypt 해시/검증, board 비밀번호 `validate()`, blind index 계산만 남아 있음
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음). BCrypt는 외부 키가 필요 없어 Vault와 무관
-   - Package: `com.xaan:vault-crypto:0.0.10`
+   - Package: `com.xaan:vault-crypto:0.0.11`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
    - 암호화 컬럼을 다루는 조회/조회 코드를 새로 짤 때는 [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md) 참고 - 단건/목록/검색/캐싱 상황별 패턴과, 실제로 겪었던 실수(이중 암호화, 캐시에 평문 노출, self-invocation 등) 정리
+   - vault-crypto로 DB 컬럼 암호화를 처음부터 구축할 때는 [vault-crypto/VAULT_CRYPTO_DEV_GUIDE.md](../vault-crypto/VAULT_CRYPTO_DEV_GUIDE.md) 참고 - 의존성/Vault/설정/스키마 준비부터 CRUD, 양방향 컬럼의 Blind Index 검색, 단방향 컬럼 조회, Redis 캐싱, 테스트 작성법까지 이 저장소(demoApp)의 users 테이블 예제로 전체 정리(vault-crypto 저장소에 있음)
 
 2. **암호화된 컬럼 검색 (Blind Index)**: 전화번호/주민등록번호는 AES-GCM이라 등호 검색이 불가능하므로, HMAC-SHA256 기반 결정적 인덱스(`phone_blind_idx`/`id_no_blind_idx`)를 별도 컬럼에 저장 - `/users` 검색이 이 컬럼을 조회한다. 정확히 일치하는 값만 찾을 수 있고(부분 검색 불가), DEK/KEK와 무관한 별도 키를 씀(`vault-crypto`의 `BlindIndexService`)
 
@@ -254,7 +255,7 @@ deploy.bat
 ```
 
 This script will:
-1. Build the application with Java 17
+1. Build the application with Java 21
 2. Distribute the JAR to production server via SCP
 3. Stop the running application
 4. Start the new version
@@ -267,15 +268,15 @@ This script will:
 
 ### Docker (Example)
 ```dockerfile
-FROM openjdk:17-jdk-slim
-COPY build/libs/xaandemo-0.0.18.jar app.jar
+FROM openjdk:21-jdk-slim
+COPY build/libs/xaandemo-0.0.19.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.18.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.18.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.19.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.19.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.57
@@ -301,6 +302,10 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### v0.0.19 (2026-09-03)
+
+**JDK 21 upgrade.** Gradle toolchain `languageVersion` bumped `17 → 21`; the dev environment now builds with `C:\SW\jdk-21.0.8` (Windows) / `/usr/lib/jvm/java-21-openjdk-amd64` (Linux). `vault-crypto` bumped in lockstep (`0.0.10 → 0.0.11`, `sourceCompatibility`/`targetCompatibility` also `17 → 21`) since demoApp depends on it. No application code changes - both projects rebuilt clean against JDK 21 (`xaandemo-0.0.19.jar` built successfully). Production deploy still pending - run `deploy.bat`/`./deploy.sh` to ship it.
 
 ### v0.0.18 (2026-08-29)
 

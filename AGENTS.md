@@ -29,15 +29,15 @@
 - **`VaultCryptoService` deleted (2026-08-19, vault-crypto v0.0.3)**: the old single-key class itself was removed from the vault-crypto library (not just deprecated) — any other project still using it is being ignored per the user's decision. vault-crypto's only public API now is the `envelope` package.
 - **Code status (2026-08-19)**: P0-P2 all done. **P0 confirmed complete**: the user ran `bootstrap_kek_dek.py`'s output against the production Vault (`ebiz_service/data/ebiz_db/kek`, `.../dek/board`, `.../dek/user-pii`) with no errors; a subsequent `gradle test` run showed `DemoApplicationTests.contextLoads()` failing on a Postgres connection error rather than `KeyLoadingException`, confirming the KEK/DEK load successfully now. P1 (vault-crypto `envelope` package, single-key class removed) and P2 (demoApp wiring, legacy-free) are implemented, build, and pass tests.
 - **KEK rotation support added (2026-08-20, P5)**: the original `KekService` held a single flat KEK with no version concept - rotating it in Vault would have broken every domain's DEK unwrap at once (total outage). `KekService` was rewritten to hold every loaded KEK version (same pattern as `DomainKeyRing`), and wrapped-DEK bytes now carry a `kekVersion` header so `unwrap()` picks the right version. Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault, versioned like DEKs) and `KekRotationSupport` (issue a new KEK version, then re-wrap a domain's DEKs under it). Added `retire(...)` to both `DekProvider` and `KekProvider`. **Breaking**: the wrapped-DEK format changed (adds a 1-byte version prefix), so the KEK/DEK secrets from P0 had to be regenerated via the updated `bootstrap_kek_dek.py`. **Done**: the user re-ran it against the production Vault on 2026-08-20 and confirmed no errors - the production `kek`/`dek/board`/`dek/user-pii` secrets are now in the v0.0.6 versioned format. Full rotation procedure (both KEK and DEK) with sequence-diagram procedure diagrams: `KEY_ROTATION_RUNBOOK.md`.
-- **Package/version**: `com.xaan:vault-crypto:0.0.6` (bumped `0.0.1 → 0.0.2 → 0.0.3 → 0.0.5 → 0.0.6`, published to `mavenLocal`; demoApp itself bumped `0.0.4 → 0.0.5 → 0.0.6` to match)
+- **Package/version**: `com.xaan:vault-crypto:0.0.11` (current; published to `mavenLocal`; demoApp itself currently at `0.0.19` - see Release History in each project's `README.md` for the full bump history)
 
 ### Production Deployment
 - **Server**: `192.168.2.57`
 - **User**: `xaan`
 - **App Path**: `/home/xaan/ws/demoBBS/app`
 - **Log Path**: `/home/xaan/ws/demoBBS/log`
-- **Deploy Script**: `./deploy.sh` (builds with Java 17, deploys JAR, restarts app)
-- **JAR Name**: `xaandemo-0.0.6.jar`
+- **Deploy Script**: `./deploy.sh` (builds with Java 21, deploys JAR, restarts app)
+- **JAR Name**: `xaandemo-0.0.19.jar`
 - **App URL**: `http://192.168.2.57:8080`
 
 ### Database
@@ -53,8 +53,8 @@
 - **Web Pages**: `/`, `/last100`, `/list1st`, `/posts/save`, `/posts/update/{id}`
 
 ### Java Version
-- **Required**: Java 17
-- **JAVA_HOME**: `/usr/lib/jvm/java-17-openjdk-amd64`
+- **Required**: Java 21
+- **JAVA_HOME**: `/usr/lib/jvm/java-21-openjdk-amd64`
 - **Default System Java**: Java 8 (must override with JAVA_HOME)
 
 ### Gradle Version
@@ -65,7 +65,7 @@
 ### Build Commands
 ```bash
 # Set environment variables before build
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 export PATH=$JAVA_HOME/bin:$PATH
 export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 
@@ -75,7 +75,12 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 
 ### Build Scripts
 - **build-with-env.sh**: Sets JAVA_HOME automatically
-- **deploy.sh**: Builds with Java 17 and deploys to production
+- **deploy.sh**: Builds with Java 21 and deploys to production
+
+### Recent Changes (2026-09-03)
+1. **JDK 21 upgrade + version bump (demoApp `0.0.18 → 0.0.19`, vault-crypto `0.0.10 → 0.0.11`)**: user asked to move both projects onto JDK 21 (dev machine JDK at `C:\SW\jdk-21.0.8`) and reflect it across all Java-related docs. Bumped Gradle toolchain `languageVersion`/`sourceCompatibility`/`targetCompatibility` `17 → 21` in both `build.gradle`s; updated every `JAVA_HOME`/"Java 17" reference in `README.md` (both projects), this file, `VAULT_AND_ENCRYPTION.md`, `PASSWORD_ENCRYPTION_MIGRATION.md`, `.vscode/settings.json`, `deploy.sh`, `deploy.bat`, `build-with-env.sh` to point at JDK 21 (Windows: `C:\SW\jdk-21.0.8`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`) - historical Release History entries left untouched.
+2. User then asked to bump the version, build, and deploy both projects to confirm everything works. vault-crypto rebuilt clean + tested + published to `mavenLocal` as `0.0.11` under JDK 21; demoApp's dependency bumped to match, then demoApp itself rebuilt clean under JDK 21 (`gradle build`, `xaandemo-0.0.19.jar` produced successfully, ~51MB bootJar). Added Release History entries for `v0.0.19`/vault-crypto `v0.0.11` to both `README.md`s.
+3. **Actual deploy to production (`./deploy.sh` / `deploy.bat`, which scp's the jar + ssh's into 192.168.2.57 to stop/restart the app) was blocked by the Claude Code auto-mode permission classifier** - consistent with the standing preference (`production-infra-manual-execution` memory) that the user runs commands touching production infra themselves, even though this session explicitly asked for the deploy. A plain read-only `curl http://192.168.2.57:8080/last100` (not a production change) confirmed the still-running old version (`0.0.18`) was healthy (`200`) before deploy. **The user needs to run `deploy.bat` (Windows) or `./deploy.sh` (Linux) themselves** to actually ship `0.0.19` - both scripts are already updated with the new `JAR_VERSION=0.0.19` and JDK 21 `JAVA_HOME`.
 
 ### Recent Changes (2026-08-29)
 1. **Critical bug found and fixed: v0.0.16's TypeHandlers were silently encrypting every plain `String` column app-wide (v0.0.16 → v0.0.17)**: the user reported "login이 안됨" (login doesn't work) at `http://192.168.2.57:8080/login`. `/login` itself checked out fine (wrong-password case returned the expected error page), but reproducing end-to-end via a fresh `/register` call threw a 500 - server log showed `PSQLException: value too long for type character varying(50)` on the INSERT. `user_id` (`logintest1`, 10 chars) is the only varchar(50) column among the seven inserted, and the only value in that statement long enough to hit a 50-char cap is a BCrypt hash (60 chars) or an encrypted ciphertext - meaning the plain `#{userId}` parameter (no `typeHandler=` attribute at all) was somehow getting AES-GCM encrypted.
@@ -167,7 +172,7 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 - vault-crypto: `/home/xaan/opencode/projects/vault-crypto/` (separate JAR)
 - Python decryption script (`decrypt_passwords.py`) available for password verification
 - `spring.jpa.open-in-view` warning can be suppressed by setting `spring.jpa.open-in-view=false`
-- Java 8 is default system Java - always use Java 17 for builds
+- Java 8 is default system Java - always use Java 21 for builds
 
 ### File References
 - **Vault/Encryption Docs**: `VAULT_AND_ENCRYPTION.md`

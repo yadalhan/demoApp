@@ -14,13 +14,13 @@ The encryption functionality has been extracted into a separate package `vault-c
 - **Group ID**: `com.xaan`
 - **Artifact ID**: `vault-crypto`
 - **Version**: `0.0.1`
-- **Build**: Gradle 8.7, Java 17
+- **Build**: Gradle 8.7, Java 21
 - **Output**: `vault-crypto-0.0.1.jar`
 
 ### Building vault-crypto
 ```bash
 cd /home/xaan/opencode/projects/vault-crypto
-export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
 ./gradlew clean build publishToMavenLocal
 ```
 

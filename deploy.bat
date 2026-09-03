@@ -7,7 +7,7 @@ set PROD_SERVER=192.168.2.57
 set PROD_USER=xaan
 set PROD_APP_DIR=/home/xaan/ws/demoBBS/app
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS
-set JAR_VERSION=0.0.18
+set JAR_VERSION=0.0.19
 set JAR_BASENAME=xaandemo-%JAR_VERSION%.jar
 set JAR_FILE=build\libs\%JAR_BASENAME%
 set PROD_LINK_NAME=xaandemo-prod.jar
@@ -22,7 +22,7 @@ echo ========================================
 echo.
 echo [Step 0/4] Building application...
 
-set JAVA_HOME=C:\SW\jdk-17.0.15
+set JAVA_HOME=C:\SW\jdk-21.0.8
 set GRADLE_HOME=C:\SW\gradle-8.14.5\bin
 set PATH=%JAVA_HOME%\bin;%GRADLE_HOME%;%PATH%
 
