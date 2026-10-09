@@ -17,7 +17,9 @@ public class VaultHealthIndicator implements HealthIndicator {
     public Health health() {
         try {
             var response = vaultOperations.read("sys/health");
-            if (response != null && response.getData() != null) {
+            if (response != null) {
+                // /v1/sys/health returns health fields at top level (no "data" key);
+                // a non-null read proves Vault is reachable and the token is valid.
                 return Health.up().withDetail("status", "Vault is reachable").build();
             }
             return Health.down().withDetail("error", "Vault returned null response").build();
