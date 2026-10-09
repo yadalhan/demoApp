@@ -54,6 +54,19 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
+REM Start script must also be refreshed: since 0.0.19 the jar ships no packaged
+REM application.properties (config lives at %PROD_APP_DIR%/application.properties
+REM on the server, git-ignored). startapp.sh passes it via
+REM --spring.config.additional-location. Without this scp, an older startapp.sh
+REM on the server would launch the app without any config (Vault token missing
+REM -> startup crash).
+scp "startapp.sh" "%PROD_USER%@%PROD_SERVER%:%PROD_BASE_DIR%/startapp.sh"
+if %ERRORLEVEL% NEQ 0 (
+    echo Failed to distribute startapp.sh.
+    exit /b 1
+)
+echo startapp.sh refreshed (includes --spring.config.additional-location).
+
 echo.
 echo [Step 2/4] Stopping application on %PROD_SERVER%...
 

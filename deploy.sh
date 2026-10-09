@@ -53,6 +53,19 @@ if ! scp "relink_prod_jar.sh" "${PROD_USER}@${PROD_SERVER}:${PROD_BASE_DIR}/reli
     exit 1
 fi
 
+# Start script must also be refreshed: since 0.0.19 the jar ships no packaged
+# application.properties (config lives at ${PROD_APP_DIR}/application.properties
+# on the server, git-ignored). startapp.sh passes it via
+# --spring.config.additional-location. Without this scp, an older startapp.sh
+# on the server would launch the app without any config (Vault token missing
+# -> startup crash).
+if scp "startapp.sh" "${PROD_USER}@${PROD_SERVER}:${PROD_BASE_DIR}/startapp.sh"; then
+    echo -e "${GREEN}startapp.sh refreshed (includes --spring.config.additional-location).${NC}"
+else
+    echo -e "${RED}Failed to distribute startapp.sh.${NC}"
+    exit 1
+fi
+
 echo -e "\n${YELLOW}[Step 2/4] Stopping application on ${PROD_SERVER}...${NC}"
 
 if ssh "${PROD_USER}@${PROD_SERVER}" "bash ${STOP_SCRIPT}"; then
