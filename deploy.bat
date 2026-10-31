@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableDelayedExpansion
 
-REM Deploys the latest JAR to production server (192.168.2.57) and restarts the application
+REM Deploys the latest JAR to production server (192.168.2.56) and restarts the application
 
-set PROD_SERVER=192.168.2.57
+set PROD_SERVER=192.168.2.56
 set PROD_USER=xaan
 set PROD_APP_DIR=/home/xaan/ws/demoBBS/app
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS

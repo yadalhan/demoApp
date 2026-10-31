@@ -17,7 +17,7 @@ REM startup and caches it, so a reencrypt done in the same run as a rotate would
 REM still see the pre-rotation version and never touch the just-created one -
 REM run rotate, let it finish, then run reencrypt as its own invocation.
 
-set PROD_SERVER=192.168.2.57
+set PROD_SERVER=192.168.2.56
 set PROD_USER=xaan
 set PROD_BASE_DIR=/home/xaan/ws/demoBBS
 REM Jar path is no longer passed as an argument - dek_ops_batch.sh always

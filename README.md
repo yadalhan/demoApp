@@ -266,7 +266,7 @@ CREATE TABLE ebiz.board (
 ## Deployment
 
 ### Using deploy.bat (Windows - Recommended)
-The project includes a deployment script for production server (192.168.2.57):
+The project includes a deployment script for production server (192.168.2.56):
 
 ```bat
 deploy.bat
@@ -297,10 +297,10 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 3. Run with: `java -jar xaandemo-0.0.19.jar`
 
 ### Production Server Details
-- **Host**: 192.168.2.57
+- **Host**: 192.168.2.56
 - **User**: xaan
 - **App Directory**: `/home/xaan/ws/demoBBS/app`
-- **Application URL**: http://192.168.2.57:8080
+- **Application URL**: http://192.168.2.56:8080
 
 ## Development
 

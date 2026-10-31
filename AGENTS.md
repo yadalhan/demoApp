@@ -32,13 +32,13 @@
 - **Package/version**: `com.xaan:vault-crypto:0.0.11` (current; published to `mavenLocal`; demoApp itself currently at `0.0.19` - see Release History in each project's `README.md` for the full bump history)
 
 ### Production Deployment
-- **Server**: `192.168.2.57`
+- **Server**: `192.168.2.56`
 - **User**: `xaan`
 - **App Path**: `/home/xaan/ws/demoBBS/app`
 - **Log Path**: `/home/xaan/ws/demoBBS/log`
 - **Deploy Script**: `./deploy.sh` (builds with Java 21, deploys JAR, restarts app)
 - **JAR Name**: `xaandemo-0.0.19.jar`
-- **App URL**: `http://192.168.2.57:8080`
+- **App URL**: `http://192.168.2.56:8080`
 
 ### Database
 - **Host**: `192.168.2.57:21716`

@@ -3,7 +3,7 @@
 # Deploys the latest JAR to production server (hactus57) and restarts the application
 set -e
 
-PROD_SERVER="192.168.2.57"
+PROD_SERVER="192.168.2.56"
 PROD_USER="xaan"
 PROD_APP_DIR="/home/xaan/ws/demoBBS/app"
 PROD_BASE_DIR="/home/xaan/ws/demoBBS"
