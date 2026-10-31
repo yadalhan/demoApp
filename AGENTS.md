@@ -1,28 +1,28 @@
 # demoApp - Project Knowledge
 
-## Critical Information (Last Updated: 2026-08-29)
+## Critical Information (Last Updated: 2026-10-31)
 
-### Vault Configuration (Updated 2026-05-08)
-- **Server**: `http://192.168.2.57:8200`
-- **Token**: `hvs.YOUR_TOKEN_HERE` (stored in `application.properties` which is in `.gitignore`)
-- **Config File**: `src/main/resources/application.properties`
-- **Fail-fast**: `false` (app starts even if Vault unavailable)
-- **Secret Path**: `ebiz_service/data/ebiz_db/data-enc-key` (kv-v2 backend)
-- **Fernet Key**: Read from Vault via `VaultOperations.read()` at startup
-- **Key Structure**: 32 bytes (used as AES-256 key, ECB mode)
+### Vault Configuration (Updated 2026-10-31)
+- **Server**: `http://192.168.2.57:8200`, kv-v2 mount `ebiz_service`
+- **Token**: `${VAULT_TOKEN}` in `application.properties` (gitignored; the repo ships no properties file — production config lives at `/home/xaan/ws/demoBBS/app/application.properties` and is passed via `--spring.config.additional-location`)
+- **Config Template**: README's "Configuration" section (no real values committed)
+- **Fail-fast**: `false` — but the crypto beans are **eager** and read Vault during context startup. A sealed/unreachable Vault or a missing secret fails startup with `KeyLoadingException` regardless of this setting. An already-running process is unaffected (DEKs cached in memory) — check `vault status` before restarting.
+- **KEK**: `ebiz_db/kek` (`kek-v{n}`, `current-version`)
+- **DEKs**: `ebiz_db/dek/board`, `ebiz_db/dek/user-pii` (`dek-v{n}`, `current-version`)
+- **Blind-index keys**: `ebiz_db/blind-index/user-phone`, `.../user-rrn` (`key`, unversioned)
+- **Legacy secret**: `ebiz_db/data-enc-key` (`fernet-key`) is **no longer read** by the app; delete it from Vault if still present (its value was exposed in the public repo history)
 
-### Password Encryption (Updated 2026-05-08)
-- **Issue Fixed**: Passwords were stored in plain text
-- **Fix**: Using `vault-crypto` package (separate JAR) for encryption
-- **Package**: `com.xaan:vault-crypto:0.0.1-SNAPSHOT` (built separately)
-- **Algorithm**: AES-256 (ECB mode, PKCS5 padding) using Fernet key from Vault
-- **Key Source**: Vault kv-2 path `ebiz_service/data/ebiz_db/data-enc-key`, field `fernet-key`
-- **Status**: New posts encrypt passwords automatically; old plain-text passwords migrated
-- **Verification**: Python decryption script (`decrypt_passwords.py`) tested and verified
-- **Details**: See `VAULT_AND_ENCRYPTION.md` and `VAULT_INTEGRATION_DIAGRAM.md`
-- **vault-crypto docs**: See `vault-crypto/README.md`
+### Encryption (Updated 2026-10-31)
+- **Login password** (`users.password`): BCrypt one-way hash via `PasswordHasher` — no Vault key involved
+- **Board password / RRN / phone** (`board.password`, `users.id_no`, `users.phone`): AES-256-GCM **KEK-DEK envelope** encryption, one DEK per domain (`board`=1, `user-pii`=2), unwrapped once at startup and cached in memory
+- **Searchable encrypted values**: per-field HMAC-SHA256 **blind index** (`users.phone_blind_idx`, `users.id_no_blind_idx`) — exact match only
+- **Package**: `com.xaan:vault-crypto:0.0.11` (demoApp `0.0.19`)
+- **Ciphertext**: `Base64URL(domainCode(1B) | keyVersion(1B) | IV(12B) | ciphertext | GCM tag(16B))`
+- **Applied at**: MyBatis TypeHandlers (`BoardPasswordTypeHandler` write-only, `UserPiiTypeHandler` both ways) — services handle plaintext only
+- **Legacy data**: ~46,266 `board.password` rows predate the envelope format; `validate()` returns `false` for them (P3 migration cancelled by decision). See `IMPROVEMENTS.md` P0-3 for the open policy question.
+- **Details**: `VAULT_AND_ENCRYPTION.md` (current architecture), `VAULT_INTEGRATION_DIAGRAM.md` (flows), `vault-crypto/README.md` (library API)
 
-### KEK-DEK Envelope Encryption (In progress, started 2026-08-15)
+### KEK-DEK Envelope Encryption (Done; design 2026-08-15 → operational 2026-08-20)
 - **Goal**: Replace the single flat Vault key above with a KEK-DEK envelope model — a Vault-held KEK wraps one DEK per service domain (`board`, `user-pii`), and each domain's DEK is unwrapped once at startup and cached in memory so request-time encrypt/decrypt never calls Vault.
 - **Design + phased plan**: See `KEK_DEK_ENCRYPTION_PLAN.md` (analysis of the old single-key structure, target architecture, ciphertext format, phase table with status)
 - **Migration abandoned (2026-08-19)**: The `users` table will be dropped entirely, and existing `board.password` ciphertext is being left as-is rather than migrated. All legacy-format decrypt fallback and the P3 backfill migration code have been removed — `PasswordService` and `CryptoConfig` no longer reference the old `VaultCryptoService` at all. Decrypting/validating pre-existing ciphertext with the new code now fails cleanly (`CryptoException` / `false`) instead of falling back.
@@ -76,6 +76,14 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 ### Build Scripts
 - **build-with-env.sh**: Sets JAVA_HOME automatically
 - **deploy.sh**: Builds with Java 21 and deploys to production
+
+### Recent Changes (2026-10-31)
+
+1. **Documentation modernized to the KEK-DEK architecture (no version bump).** `VAULT_AND_ENCRYPTION.md` and `VAULT_INTEGRATION_DIAGRAM.md` were still describing the 2026-05 single-key (`fernet-key`, ECB/AES-128 wording) design; both were rewritten around the current structure (BCrypt for `users.password`, AES-256-GCM KEK-DEK envelope via MyBatis TypeHandlers, HMAC blind index, Vault paths `ebiz_db/kek` / `dek/{board,user-pii}` / `blind-index/*`, eager startup key loading). `IMPROVEMENTS.md` was restructured into a current backlog with resolved items moved to a history table. `PASSWORD_ENCRYPTION_MIGRATION.md` and `VAULT_INTEGRATION_PRESENTATION.md` were marked as historical records with pointers to the current docs. README's Vault setup section was replaced with the `bootstrap_kek_dek.py` / `bootstrap_blind_index_keys.py` workflow.
+2. **Exposed legacy key removed from tracked files.** The old single-key value (`fernet-key`) was present in `README.md`, `VAULT_AND_ENCRYPTION.md`, `VAULT_INTEGRATION_DIAGRAM.md`, and hardcoded in `decrypt_passwords.py`. All copies were removed. `decrypt_passwords.py` now reads KEK/DEK from Vault (`VAULT_ADDR`/`VAULT_TOKEN`), unwraps them, decrypts the current envelope format, classifies BCrypt/legacy/unknown, and supports `--self-test` (crypto-only, no Vault/DB). **Recommended follow-up: delete the legacy `ebiz_service/data-enc-key` secret from Vault and treat that key as compromised** (it was in a public repo's history).
+3. **Stale one-off generator deleted.** `regenerate_markdown.py` wrote old doc content to `/home/xaan/opencode/projects/demoApp/` (a path that no longer exists) and would have overwritten the modernized docs if run. Removed; git history retains it.
+4. **vault-crypto repo hygiene.** 26 tracked files under `build/`/`.gradle/` were untracked (`git rm -r --cached build .gradle`); `.gitignore` already covered both. Also published `0.0.11` to `mavenLocal` and verified both projects build against it (vault-crypto: 21 tests pass; demoApp: `compileJava` + 10 unit tests pass; `contextLoads()` still requires Vault/DB/`application.properties`).
+5. **Not done / still open:** production deploy of `0.0.19` (user runs `deploy.bat`/`./deploy.sh`), legacy `board.password` policy (~46,266 non-envelope rows), KEK-rotation/`retire()` operator triggers, blind-index key rotation/backfill tooling. See `IMPROVEMENTS.md`.
 
 ### Recent Changes (2026-09-03)
 1. **JDK 21 upgrade + version bump (demoApp `0.0.18 → 0.0.19`, vault-crypto `0.0.10 → 0.0.11`)**: user asked to move both projects onto JDK 21 (dev machine JDK at `C:\SW\jdk-21.0.8`) and reflect it across all Java-related docs. Bumped Gradle toolchain `languageVersion`/`sourceCompatibility`/`targetCompatibility` `17 → 21` in both `build.gradle`s; updated every `JAVA_HOME`/"Java 17" reference in `README.md` (both projects), this file, `VAULT_AND_ENCRYPTION.md`, `PASSWORD_ENCRYPTION_MIGRATION.md`, `.vscode/settings.json`, `deploy.sh`, `deploy.bat`, `build-with-env.sh` to point at JDK 21 (Windows: `C:\SW\jdk-21.0.8`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`) - historical Release History entries left untouched.
@@ -168,22 +176,25 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 5. Verified encryption working on production
 
 ### Important Notes
-- Password encryption uses `vault-crypto` package (AES-256, ECB mode)
-- vault-crypto: `/home/xaan/opencode/projects/vault-crypto/` (separate JAR)
-- Python decryption script (`decrypt_passwords.py`) available for password verification
-- `spring.jpa.open-in-view` warning can be suppressed by setting `spring.jpa.open-in-view=false`
-- Java 8 is default system Java - always use Java 21 for builds
+- Password/PII crypto all lives in `vault-crypto`: BCrypt (`PasswordHasher`), AES-256-GCM KEK-DEK envelope (`EnvelopeCryptoService`), HMAC blind index (`BlindIndexService`), MyBatis base handler (`EnvelopeCryptoTypeHandler`). demoApp services handle plaintext only.
+- vault-crypto: sibling checkout `../vault-crypto` (built and published to `mavenLocal` separately; publish it before building demoApp)
+- The repo contains **no** `application.properties` (gitignored). Local runs need one plus reachable Vault + PostgreSQL.
+- Python tooling: `decrypt_passwords.py` (envelope/legacy/BCrypt classification, `--self-test`), `bootstrap_kek_dek.py`, `bootstrap_blind_index_keys.py` (the bootstrap scripts only print `vault kv put` commands)
+- Java 8 is the system default - always use Java 21 for builds
 
 ### File References
-- **Vault/Encryption Docs**: `VAULT_AND_ENCRYPTION.md`
+- **Vault/Encryption Docs**: `VAULT_AND_ENCRYPTION.md` (current architecture), `VAULT_INTEGRATION_DIAGRAM.md` (flows)
+- **Improvement Backlog**: `IMPROVEMENTS.md` (open items + resolved history)
 - **KEK-DEK Envelope Encryption Plan**: `KEK_DEK_ENCRYPTION_PLAN.md` (design + phased plan; P3 data migration cancelled 2026-08-19; P5 rotation core done 2026-08-20)
 - **Key Rotation Runbook**: `KEY_ROTATION_RUNBOOK.md` (step-by-step KEK/DEK rotation procedures with Mermaid sequence diagrams, checklists, rollback scenarios; added 2026-08-20)
-- **Rotation Procedure Slides**: `KEY_ROTATION_RUNBOOK.pptx` (generated from the runbook's two procedure diagrams via `python-pptx`; not tracked in git, regenerate locally if needed - see the generator note in this file's 2026-08-20 changes)
-- **Main Config**: `src/main/resources/application.properties`
-- **Crypto Wiring**: `src/main/java/com/xaan/demo/config/CryptoConfig.java` (KEK/DEK/domain `EnvelopeCryptoService` beans only, no legacy bean; wires `VaultKekProvider` + `KekService.load(...)` since v0.0.6)
-- **Password Service**: `src/main/java/com/xaan/demo/service/PasswordService.java` (uses vault-crypto envelope services only, no legacy fallback)
+- **Encrypted Column Query Guide**: `ENCRYPTED_COLUMN_QUERY_GUIDE.md` (mapper/service rules and common mistakes)
+- **Historical Documents**: `PASSWORD_ENCRYPTION_MIGRATION.md` (2026-05 BCrypt migration), `VAULT_INTEGRATION_PRESENTATION.md` (2026-05 slide deck listing), `VAULT_INTEGRATION_DIAGRAM.md`'s single-key ancestors live in git history
+- **Main Config**: `src/main/resources/application.properties` (gitignored; template in README)
+- **Crypto Wiring**: `src/main/java/com/xaan/demo/config/CryptoConfig.java` (KEK/DEK/blind-index/domain `EnvelopeCryptoService` beans; `VaultKekProvider` + `KekService.load(...)`)
+- **Password Service**: `src/main/java/com/xaan/demo/service/PasswordService.java` (BCrypt delegation, board `validate()`, blind index, display decrypt)
 - **Board Service**: `src/main/java/com/xaan/demo/service/BoardService.java`
-- **Deploy Script**: `deploy.sh`
-- **Python Decryption Script**: `decrypt_passwords.py` (tested 2026-05-08; note it still decodes the old single-key format, now unrelated to how the app encrypts)
-- **P0 Bootstrap Script**: `bootstrap_kek_dek.py` (generates versioned KEK/DEK and prints `vault kv put` commands; does not touch Vault itself; updated 2026-08-20 for the v0.0.6 wrap format - must be re-run against production Vault)
-- **vault-crypto Package**: `/c/Temp/ag-projects/vault-crypto/` (now at v0.0.6; envelope package added 2026-08-15, `VaultCryptoService` deleted 2026-08-19, KEK versioning + rotation support added 2026-08-20 — `envelope` is now the only public API)
+- **Deploy Script**: `deploy.sh` / `deploy.bat` (+ `relink_prod_jar.sh`, `startapp.sh`)
+- **Python Verification Script**: `decrypt_passwords.py` (current envelope format; loads KEK/DEK from Vault; `--self-test`)
+- **P0 Bootstrap Script**: `bootstrap_kek_dek.py` (versioned KEK/DEK, versioned wrap format; prints commands only)
+- **Blind Index Bootstrap Script**: `bootstrap_blind_index_keys.py` (prints commands only; run once)
+- **vault-crypto Package**: `../vault-crypto` (v0.0.11; `envelope`, `blindindex`, `mybatis`, `PasswordHasher` — `VaultCryptoService` removed in v0.0.3)

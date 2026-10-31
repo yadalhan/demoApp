@@ -87,9 +87,9 @@ spring.datasource.password=${DB_PASSWORD:changeme}
 mybatis.configuration.map-underscore-to-camel-case=true
 ```
 
-### Vault Configuration (Updated 2026-05-07)
+### Vault Configuration (Updated 2026-10-31)
 
-The application now uses **HashiCorp Vault kv-v2** (versioned key-value) backend:
+The application uses **HashiCorp Vault kv-v2** (versioned key-value) backend:
 
 ```properties
 # Vault Configuration (connection only)
@@ -97,6 +97,11 @@ spring.cloud.vault.uri=http://192.168.2.57:8200
 spring.cloud.vault.token=${VAULT_TOKEN}
 spring.cloud.vault.fail-fast=false
 ```
+
+> **Startup dependency**: the KEK/DEK/blind-index beans are eager and read Vault while the context
+> is starting, so a sealed/unreachable Vault (or a missing secret) fails startup with
+> `KeyLoadingException` even though `fail-fast=false`. An already-running process is unaffected
+> because DEKs are cached in memory — check `vault status` before restarting/redeploying.
 
 ### Vault kv-v2 Integration (KEK-DEK envelope encryption, since 2026-08-19)
 - **Mount**: `ebiz_service` (kv-v2)
@@ -112,30 +117,43 @@ spring.cloud.vault.fail-fast=false
 3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because ~46k legacy rows predate the envelope format and would break ordinary list/view reads if decrypted on every `SELECT`; `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
 5. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB; phone/RRN additionally get a deterministic HMAC in a companion `*_blind_idx` column for exact-match search
-6. Python decryption script (`decrypt_passwords.py`) only understands the old single-key format now, unrelated to how the app currently encrypts
+6. Python verification script (`decrypt_passwords.py`) supports the current envelope format (loads
+   KEK/DEK from Vault and unwraps them) as well as classifying legacy/BCrypt values
+   (`python3 decrypt_passwords.py --self-test` runs the crypto checks without Vault/DB)
 
 ### vault-crypto Package
 Encryption functionality is extracted into a separate package:
 - **Repository**: `vault-crypto/` (별도 프로젝트)
 - **Build**: `gradle.bat clean build publishToMavenLocal` (Windows) 또는 `./gradlew clean build publishToMavenLocal` (Linux)
 - **Usage**: See `vault-crypto/README.md` for details
+- **Build order**: demoApp depends on the published `com.xaan:vault-crypto:0.0.11`, so publish the
+  library first (`publishToMavenLocal`); otherwise dependency resolution fails when `~/.m2` only has
+  an older version
 
 ### Setting up Vault Secrets
+Both bootstrap scripts **only print** ready-to-run `vault kv put` commands — they never connect to
+Vault, so the operator reviews and runs them.
+
 ```bash
 # Enable kv-v2 backend (if not already enabled)
 vault secrets enable -path=ebiz_service kv-v2
 
-# Store the Fernet encryption key
-vault kv put -mount=ebiz_service ebiz_db/data-enc-key \
-  fernet-key="NgqOBievnB9500cQOnSQ-cmbBx38KnOiKx5ooQ_e97Y=" \
-  description="encryption key for ebiz db column"
+# 1) KEK + per-domain wrapped DEKs (kek-v1 / dek-v1 / current-version)
+python3 bootstrap_kek_dek.py
 
-# Verify the secret
-vault kv get -mount=ebiz_service ebiz_db/data-enc-key
+# 2) Blind-index HMAC keys (user-phone, user-rrn)
+python3 bootstrap_blind_index_keys.py
+
+# Verify
+vault kv get -mount=ebiz_service ebiz_db/kek
+vault kv get -mount=ebiz_service ebiz_db/dek/board
+vault kv get -mount=ebiz_service ebiz_db/dek/user-pii
+vault kv get -mount=ebiz_service ebiz_db/blind-index/user-phone
+vault kv get -mount=ebiz_service ebiz_db/blind-index/user-rrn
 ```
 
-> **Note**: Vault secret path `ebiz_service/data/ebiz_db/data-enc-key` needs to be configured. 
-> See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for implementation details.
+> The legacy single-key secret `ebiz_db/data-enc-key` (`fernet-key`) is **no longer read** by the
+> application. See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for the current architecture.
 
 ## Building the Project
 
@@ -302,6 +320,19 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### Docs & repository hygiene (2026-10-31, no version bump)
+
+**문서 현행화**: 단일 키(`fernet-key`) 시절 내용이 남아 있던 `VAULT_AND_ENCRYPTION.md`와
+`VAULT_INTEGRATION_DIAGRAM.md`를 현재 KEK-DEK 봉투 암호화 구조로 전면 재작성했다. `IMPROVEMENTS.md`는
+현재 백로그 기준으로 재정리(해결/미해결 구분), `PASSWORD_ENCRYPTION_MIGRATION.md`와
+`VAULT_INTEGRATION_PRESENTATION.md`는 역사 기록임을 명시했다.
+
+**보안 정리**: 문서·README·`decrypt_passwords.py`에 남아 있던 구 단일 키(`fernet-key`) 실제 값을
+제거했다. `decrypt_passwords.py`는 하드코딩 키 대신 Vault에서 KEK/DEK를 읽어 봉투 포맷을 복호화하도록
+갱신하고 `--self-test`를 추가했다. 구 경로(`/home/xaan/opencode/...`)로 옛 문서를 덮어쓰던 일회성
+생성기 `regenerate_markdown.py`는 삭제했다. (vault-crypto 저장소에서는 커밋되어 있던 `build/`·`.gradle/`
+산출물 26개를 추적 해제했다.)
 
 ### v0.0.19 (2026-09-03)
 

@@ -1,5 +1,17 @@
 # Password Encryption Migration 문서
 
+> **⚠️ 역사 기록 (2026-05-11, demoApp `0.0.4` 시점).** 이 문서는 BCrypt 도입 당시의 작업 기록이며,
+> 현재 구조를 설명하지 않는다. 특히 아래 서술은 이후 변경으로 더 이상 유효하지 않다.
+>
+> - `PasswordService`가 인라인 AES-GCM/`VaultCryptoService`를 직접 다루던 구조 → 지금은 KEK-DEK
+>   봉투 암호화(도메인별 `EnvelopeCryptoService`) + MyBatis `TypeHandler`로 이관됨
+> - `spring-security-crypto` 직접 의존 → `vault-crypto`의 `PasswordHasher`로 통합(`0.0.14`)
+> - 단일 키(`fernet-key`) → KEK/DEK 버전 관리(`0.0.6` 이후)
+> - 저장소 경로(`/home/xaan/projects/oc/demoApp`)와 버전 표기(`0.0.4`)는 당시 기준
+>
+> **현행 구조는 [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md), 설계 이력은
+> [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md)를 참고하라.**
+
 ## 개요
 
 본 문서는 demoApp의 비밀번호 암호화 방식을 BCrypt 단방향 해시로 마이그레이션한 작업을 기록합니다.

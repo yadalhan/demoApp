@@ -85,3 +85,7 @@ my_env/
 AGENTS.md
 src/main/resources/application.properties
 ..sisyphus/
+
+### Python cache ###
+__pycache__/
+*.pyc
