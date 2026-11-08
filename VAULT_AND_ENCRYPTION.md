@@ -1,11 +1,12 @@
 # Vault Configuration and Encryption (Current Architecture)
 
-> **Status: current as of 2026-10-31 (demoApp `0.0.19`, vault-crypto `0.0.11`).**
+> **Status: current as of 2026-11-08 (demoApp `0.0.19`, vault-crypto `0.0.11`, KMS = OpenBao `2.6.2`).**
 >
 > 이 문서는 **현행** KEK-DEK 봉투 암호화 구조를 설명한다. 2026-05 ~ 2026-08 초에 쓰인
 > 단일 키(`fernet-key`) 방식 문서는 폐기되었다 — 해당 설계의 분석과 전환 이력은
 > [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md), [PASSWORD_ENCRYPTION_MIGRATION.md](PASSWORD_ENCRYPTION_MIGRATION.md),
-> 그리고 git history를 참고하라. 구 `data-enc-key` 경로는 **앱이 더 이상 읽지 않는다.**
+> 그리고 git history를 참고하라. 구 `data-enc-key`는 암호화에는 쓰이지 않지만 Spring Cloud Vault의
+> property source로 여전히 조회되므로 OpenBao로 함께 이관되어 있다(정리 예정).
 
 ## 1. 한눈에 보기
 
@@ -15,12 +16,12 @@ demoApp의 암호화는 전부 `com.xaan:vault-crypto:0.0.11` 라이브러리에
 | 대상 | 방식 | 키 | 적용 지점 |
 |---|---|---|---|
 | `users.password` (로그인 비밀번호) | **BCrypt** 단방향 해시 (복호화 불가) | 없음 (salt 내장) | `PasswordHasher` (`PasswordService.hashUserPassword/validateUserPassword`) |
-| `board.password`, `users.id_no`, `users.phone` | **AES-256-GCM KEK-DEK 봉투 암호화** (양방향) | Vault의 KEK + 도메인별 DEK | MyBatis `TypeHandler` |
-| `users.phone_blind_idx`, `users.id_no_blind_idx` | **HMAC-SHA256 blind index** (결정적, 검색용) | 필드별 독립 HMAC 키 (Vault) | `BlindIndexService` (`PasswordService.compute*BlindIndex`) |
+| `board.password`, `users.id_no`, `users.phone` | **AES-256-GCM KEK-DEK 봉투 암호화** (양방향) | OpenBao의 KEK + 도메인별 DEK | MyBatis `TypeHandler` |
+| `users.phone_blind_idx`, `users.id_no_blind_idx` | **HMAC-SHA256 blind index** (결정적, 검색용) | 필드별 독립 HMAC 키 (OpenBao) | `BlindIndexService` (`PasswordService.compute*BlindIndex`) |
 
 핵심 성질:
 
-- **요청 처리 중 Vault 호출은 0회.** KEK/DEK는 앱 기동 시 한 번 로드·unwrap되어 `DomainKeyRing`에
+- **요청 처리 중 KMS(OpenBao) 호출은 0회.** KEK/DEK는 앱 기동 시 한 번 로드·unwrap되어 `DomainKeyRing`에
   캐시되고, `EnvelopeCryptoService`가 그 캐시를 참조한다.
 - **도메인 격리.** 암호문 헤더의 `domainCode` 덕분에 `board` 암호문을 `user-pii` DEK로 복호화할 수 없다.
 - **버전 인식.** 암호문의 `keyVersion`과 wrapped-DEK의 `kekVersion` 덕분에 로테이션 후에도 구 데이터가
@@ -28,10 +29,11 @@ demoApp의 암호화는 전부 `com.xaan:vault-crypto:0.0.11` 라이브러리에
 - **AES-GCM은 확률적(random IV)** 이므로 같은 평문도 매번 다른 암호문이 된다. 따라서 암호문 컬럼은
   `=`/`LIKE` 검색이 불가능하고, 검색이 필요한 값은 blind index를 함께 저장한다.
 
-## 2. Vault 구성
+## 2. KMS(OpenBao) 구성
 
-- **Server**: `http://192.168.2.57:8200` (운영), kv-v2 mount `ebiz_service`
-- **앱이 읽는 경로는 5개뿐이다.**
+- **Server**: `http://192.168.2.57:28200` (OpenBao 2.6.2, raft, unsealed), kv-v2 mount `ebiz_service`
+- **이전 KMS**: HashiCorp Vault 1.19.5 `http://192.168.2.57:8200` — 2026-11-08 컷오버 후 중지(롤백/soak용 보존)
+- **암호화에 쓰는 경로는 5개다.** (+ 레거시 `data-enc-key` 1개는 property source 용도로만 읽는다.)
 
 | Secret path (mount 기준) | 필드 | 용도 |
 |---|---|---|
@@ -70,8 +72,8 @@ vault kv get -mount=ebiz_service ebiz_db/blind-index/user-rrn
 `--spring.config.additional-location=file:...`로 주입한다.
 
 ```properties
-spring.cloud.vault.uri=http://192.168.2.57:8200
-spring.cloud.vault.token=${VAULT_TOKEN}
+spring.cloud.vault.uri=http://192.168.2.57:28200
+spring.cloud.vault.token=${VAULT_TOKEN}   # OpenBao demoapp-read 토큰
 spring.cloud.vault.fail-fast=false
 
 # 선택 - 생략하면 아래 기본값이 쓰인다 (CryptoConfig 참고)
@@ -162,14 +164,15 @@ kekVersion(1B) | IV(12B) | ciphertext(32B = DEK) | GCM tag(16B)
 
 self-describing이므로 `unwrap()`은 별도 버전 필드 없이 바이트만 보고 올바른 KEK 버전을 고른다.
 
-### 4.3 레거시 (구 단일 키) — **현재 코드로 복호화 불가**
+### 4.3 레거시 (구 단일 키) — 2026-11-08 기준 **0건**
 
-KEK-DEK 도입 이전 `board.password` 중 약 **46,266행**은 `IV | ciphertext | tag` 포맷(헤더 없음)으로
-남아 있다. 2026-08-19 결정에 따라 이 데이터는 마이그레이션하지 않았고, 따라서:
+KEK-DEK 도입 이전 `board.password`는 2026-08-19 P3 취소 당시 약 46,266행이 구 포맷
+(`IV | ciphertext | tag`, 헤더 없음)이었으나, 2026-11-08 운영 DB 확인 결과 비밀번호가 있는
+15행 전부 envelope 포맷(v5~v7)이며 **구 포맷은 0건**이다.
 
-- 해당 글의 비밀번호 검증은 항상 `false` (예외를 던지지 않음)
-- 재암호화 배치는 이 행들을 `notEnvelopeFormat`으로 집계하고 건드리지 않는다
-- 상세 배경과 정책 미정 사항은 [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) P3 참고
+- 과거 구 포맷 글은 비밀번호 값이 남아 있지 않아 검증 대상이 아니다
+- 재암호화 배치는 만약 구 포맷이 발견되면 `notEnvelopeFormat`으로 집계하고 건드리지 않는다
+- 배경은 [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) P3 참고
 
 ## 5. 조회 패턴 (반드시 지킬 것)
 
@@ -206,14 +209,15 @@ KEK-DEK 도입 이전 `board.password` 중 약 **46,266행**은 `IV | ciphertext
 ## 7. 보안 고려사항
 
 1. **저장소에 실제 키/토큰/DB 비밀번호를 쓰지 않는다.** 이 문서와 스크립트에는 플레이스홀더만 둔다.
-   과거 실수로 커밋된 구 단일 키(`fernet-key`) 값은 2026-10-31에 문서/스크립트에서 제거했으며,
-   해당 키가 Vault에 남아 있다면 폐기(삭제)할 것을 권장한다.
-2. **Vault 통신은 현재 HTTP(비 TLS) + Token 인증**이다. 운영에서는 TLS와 AppRole 도입을 권장한다.
+   과거 커밋된 구 단일 키(`fernet-key`) 값은 2026-10-31에 문서/스크립트에서 제거했다. 이 시크릿은
+   마이그레이션 시 OpenBao로 복사되었으므로, property source 설정을 제거한 뒤 양쪽 KMS에서 삭제할 것.
+2. **OpenBao 통신은 현재 HTTP(비 TLS) + Token 인증**이다. 앱 토큰은 `demoapp-read`로 최소권한화되어 있으나,
+   운영에서는 TLS와 토큰 주기 교체를 권장한다.
 3. **KEK는 데이터를 직접 암/복호화하지 않는다.** 오직 DEK wrap/unwrap 전용.
 4. **도메인 분리**를 유지한다. 새 도메인을 추가하면 고유한 `domainCode`를 부여한다.
 5. **평문을 로그/캐시/응답에 남기지 않는다.** 화면 마스킹(전화 앞 3자리, RRN 3~5번째 자리) 유지.
 6. **BCrypt는 복호화 불가**이며, 조건 검색도 불가능하다(다른 키로 조회 후 `matches()`).
-7. **`fail-fast`와 무관하게 기동 시 Vault 읽기 실패는 치명적**이다 (2절 주의 참고).
+7. **`fail-fast`와 무관하게 기동 시 OpenBao 읽기 실패는 치명적**이다 (2절 주의 참고).
 
 ## 8. 관련 문서
 
@@ -224,4 +228,5 @@ KEK-DEK 도입 이전 `board.password` 중 약 **46,266행**은 `IV | ciphertext
 | [KEY_ROTATION_RUNBOOK.md](KEY_ROTATION_RUNBOOK.md) | KEK/DEK 로테이션 운영 절차 |
 | [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md) | 암호화 컬럼 조회/수정 규칙 |
 | [IMPROVEMENTS.md](IMPROVEMENTS.md) | 현재 개선 백로그 |
+| [VAULT_TO_OPENBAO_MIGRATION_PLAN.md](VAULT_TO_OPENBAO_MIGRATION_PLAN.md) | Vault → OpenBao 전환 계획 및 실행 결과 |
 | `vault-crypto/README.md` (별도 저장소) | 라이브러리 API·설정·포맷 전체 |

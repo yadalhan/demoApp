@@ -1,6 +1,6 @@
 # Vault Integration & Crypto Flow (Current Architecture)
 
-> **Status: current as of 2026-10-31 (demoApp `0.0.19`, vault-crypto `0.0.11`).**
+> **Status: current as of 2026-11-08 (demoApp `0.0.19`, vault-crypto `0.0.11`; KMS = OpenBao `2.6.2`).**
 > 이 문서는 KEK-DEK 도입 이후의 실제 흐름을 도식화한다. 2026-05-08 단일 키(`fernet-key`) 시절의
 > 다이어그램은 폐기되었다 — 배경은 [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) 참고.
 
@@ -38,7 +38,7 @@
                            │ HTTP REST (Token Auth, 현재 비 TLS)
                            ▼
 ┌──────────────────────────────────────────────────────────────────────┐
-│                 HashiCorp Vault (kv-v2), mount: ebiz_service         │
+│                 OpenBao 2.6.2 (kv-v2), mount: ebiz_service           │
 │                                                                      │
 │  ebiz_db/kek                  kek-v{n}, current-version              │
 │  ebiz_db/dek/board            dek-v{n}, current-version              │
@@ -47,7 +47,7 @@
 │  ebiz_db/blind-index/user-rrn     key                                │
 └──────────────────────────────────────────────────────────────────────┘
 
-요청 처리 경로에는 Vault 호출이 없다.
+요청 처리 경로에는 OpenBao 호출이 없다.
 ```
 
 ## 2. 기동 시퀀스 (키 로딩)

@@ -9,7 +9,9 @@ envelope encryption, and unversioned (see BlindIndexKeyProvider's Javadoc for wh
 rotating a blind index key requires reindexing every row in one pass, unlike DEK
 rotation, so there's no "current version" concept to track here).
 
-It then prints ready-to-run `vault kv put` commands. This script does NOT talk to
+It then prints ready-to-run `vault kv put` commands. The current KMS is OpenBao 2.6.2
+at http://192.168.2.57:28200 (Vault-compatible API), so point VAULT_ADDR/BAO_ADDR there;
+the same commands work with either the `vault` or `bao` CLI. This script does NOT talk to
 Vault itself - review the printed commands, then run them yourself against the target
 Vault server (with VAULT_ADDR / VAULT_TOKEN set in your shell).
 

@@ -1,6 +1,6 @@
 # Improvement Backlog — demoApp & vault-crypto
 
-> **Last updated: 2026-10-31** (demoApp `0.0.19`, vault-crypto `0.0.11`).
+> **Last updated: 2026-11-08** (demoApp `0.0.19`, vault-crypto `0.0.11`, KMS = OpenBao `2.6.2`).
 > 이 문서는 2026-05-08의 단일 키 시절 권고안을 **현행 구조 기준으로 재정리**한 것이다.
 > 이미 해결된 항목은 §3에 이력으로 남겨둔다.
 
@@ -12,33 +12,35 @@
 | 로그인 비밀번호 | BCrypt 단방향 (`PasswordHasher`) |
 | 암호화 컬럼 검색 | 필드별 HMAC-SHA256 blind index (정확 일치) |
 | 키 로테이션 | DEK: 운영 검증 완료 / KEK: 라이브러리 API만 존재, 트리거 없음 |
-| 레거시 데이터 | `board.password` 약 46,266행 구 포맷 — **정책 미정(복호화 불가)** |
+| KMS | **OpenBao 2.6.2** (2026-11-08 Vault에서 전환), scoped `demoapp-read` 토큰, raft+Shamir 3/5 |
+| 레거시 데이터 | 2026-11-08 확인 기준 **구 포맷 0건** (비밀번호 보유 15건 전부 envelope) |
 | 자격증명 | `application.properties` gitignored, 문서/스크립트에 실제 키 제거(2026-10-31) |
 
 ## 2. 미해결 항목
 
 ### P0 — 보안/운영 안전
 
-1. **Vault TLS + AppRole 인증**
-   - 현재 `http://192.168.2.57:8200` **평문 HTTP** + 정적 Token.
-   - 권고: TLS 활성화, AppRole(role_id/secret_id)로 전환, Token TTL/갱신 정책 수립.
+1. **OpenBao TLS + 토큰 수명 관리**
+   - 현재 `http://192.168.2.57:28200` **평문 HTTP** + 정적 Token(단, root가 아닌 `demoapp-read`, TTL 768h renewable).
+   - 권고: TLS 활성화, 토큰 주기 교체/최소권한 유지. AppRole은 OpenBao에서도 사용 가능하나 현 규모에서는 후순위.
    - 영향: 토큰은 `.gitignore`로 분리되어 있으나 네트워크 구간이 암호화되지 않음.
 
 2. **구 단일 키(`fernet-key`) 폐기**
-   - 2026-10-31에 문서·스크립트에서 실제 키 값을 제거했지만, Vault의
-     `ebiz_db/data-enc-key` secret 자체가 남아 있을 수 있다.
-   - 앱은 더 이상 이 경로를 읽지 않는다 → **Vault에서 삭제하고, 키를 폐기(rotate/폐기 처리)할 것.**
+   - 문서·스크립트의 실제 키 값은 2026-10-31에 제거했고, 시크릿 `ebiz_db/data-enc-key`는
+     property source 호환을 위해 OpenBao로 **복사되어 있다**(암호화에는 미사용).
+   - 권고: `spring.cloud.vault.kv.*` 설정을 제거한 뒤 양쪽 KMS에서 시크릿 삭제.
    - 공개 저장소 이력에 남아 있던 값이므로 "이미 노출된 키"로 간주하는 것이 안전하다.
 
-3. **레거시 `board.password` 정책 확정** (별도 검토 항목)
-   - 약 46,266행이 구 포맷이라 비밀번호 검증이 항상 실패한다.
-   - 선택지: (a) 영구 무시(현행), (b) 해당 글 비밀번호 초기화/재설정 안내, (c) 운영자 도구로
-     구 키를 이용한 일회성 복호화 후 재암호화(구 키가 Vault에 남아 있어야 가능).
-   - 결정 전까지는 "비밀번호가 있는 오래된 글은 열 수 없다"는 운영 공지가 필요하다.
+3. **레거시 `board.password` 정책** — ✅ 사실상 종료 (2026-11-08 확인)
+   - 2026-08-19 P3 취소 당시 약 46,266행이 구 포맷이었으나, 2026-11-08 운영 DB 확인 결과
+     비밀번호가 있는 15행 전부 envelope 포맷(v5~v7)이며 **구 포맷 0건**이다.
+   - 추가 조치 없음. (과거 구 포맷 글의 비밀번호는 이미 제거/정리된 상태)
 
-4. **기동 시 Vault 의존성 문서/운영 절차 명확화**
-   - `fail-fast=false`여도 KEK/DEK/blind-index 빈이 eager로 Vault를 읽으므로 **sealed/미도달 시 기동 실패**.
-   - 배포 전 `vault status` 확인을 체크리스트에 포함(과거 sealed 상태에서 재기동해 장애가 발생한 이력 있음).
+4. **기동 시 OpenBao 의존성·unseal/백업 운영 절차**
+   - `fail-fast=false`여도 KEK/DEK/blind-index 빈이 eager로 OpenBao를 읽으므로 **sealed/미도달 시 기동 실패**.
+   - 배포 전 OpenBao seal 상태 확인을 체크리스트에 포함.
+   - 컨테이너/호스트 재시작 후 **수동 unseal(3/5)** 필요 → 키 보관·리허설·runbook 문서화.
+   - raft 스냅샷 주기/오프호스트 보관/복구 리허설 필요.
 
 ### P1 — 키 관리 완결성
 
@@ -63,13 +65,13 @@
 
 9. **테스트 커버리지 확대**
    - 현재 단위 테스트: `PasswordServiceTest`(6), `UserResponseDtoTest`(4), vault-crypto 21개.
-   - `contextLoads()`는 Vault/DB가 필요해 로컬에서 실행 불가 → Testcontainers 또는 Vault dev server
+   - `contextLoads()`는 OpenBao/DB가 필요해 로컬에서 실행 불가 → Testcontainers 또는 OpenBao dev server
      기반 통합 테스트 도입 검토.
    - Redis 캐시(`/users2`) 동작, TypeHandler 등록 범위 회귀 테스트는 라이브러리 쪽에만 존재.
 
 10. **암호화된 컬럼용 복호화 도구 현행화**
     - 기존 `decrypt_passwords.py`는 구 단일 키 포맷 전용이었다.
-    - 2026-10-31에 KEK/DEK unwrap + 봉투 포맷을 지원하도록 갱신(Vault 키 로드, `--self-test` 포함).
+    - 2026-10-31에 KEK/DEK unwrap + 봉투 포맷을 지원하도록 갱신(OpenBao 키 로드, `--self-test` 포함).
     - `users.phone`/`id_no`의 봉투 포맷 검증에도 사용 가능.
 
 11. **관측성(metrics/logging)**
@@ -100,7 +102,9 @@
 | KEK/DEK 로테이션 지원 | 2026-08-20 | `KekRotationSupport`, `DekRotationSupport`, 재암호화 배치, `dek_ops_batch.sh/.bat` |
 | MyBatis TypeHandler 전역 오염 | 2026-08-29 | `TypeHandler<String>` 직접 구현으로 수정(vault-crypto `0.0.10`), 회귀 테스트 추가 |
 | 평문 PII의 Redis 유입 | 2026-08-29 | raw ciphertext만 캐싱(`UserSearchCacheService`), 복호화는 캐시 이후 |
-| 레거시 단일 키 사용 중단 | 2026-08-19 | `VaultCryptoService` 삭제, `data-enc-key` 경로 미사용 |
+| 레거시 단일 키 사용 중단 | 2026-08-19 | `VaultCryptoService` 삭제, `data-enc-key` 암호화 미사용 |
+| KMS 전환 (Vault → OpenBao) | 2026-11-08 | 시크릿 무변경 복사, 두 인스턴스 재기동, scoped 토큰, Vault 중지 |
+| 레거시 `board.password` 정리 | 2026-11-08 | 운영 DB 구 포맷 0건 확인 |
 
 ## 4. 참고
 
@@ -108,3 +112,4 @@
 - 운영 절차: [KEY_ROTATION_RUNBOOK.md](KEY_ROTATION_RUNBOOK.md)
 - 조회 규칙: [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md)
 - 현행 구조: [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md), [VAULT_INTEGRATION_DIAGRAM.md](VAULT_INTEGRATION_DIAGRAM.md)
+- KMS 전환 기록: [VAULT_TO_OPENBAO_MIGRATION_PLAN.md](VAULT_TO_OPENBAO_MIGRATION_PLAN.md)

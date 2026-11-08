@@ -15,7 +15,8 @@ Current formats (see VAULT_AND_ENCRYPTION.md and vault-crypto/README.md):
   column value : Base64URL( domainCode(1B) | keyVersion(1B) | IV(12B) | ct | tag(16B) )
   wrapped DEK  : kekVersion(1B) | IV(12B) | ct(32B) | tag(16B)          (Vault dek-v{n})
 
-The KEK/DEK material is read from Vault at runtime - no key is embedded in this file.
+The KEK/DEK material is read from the KMS (OpenBao 2.6.2, Vault-compatible API) at runtime -
+no key is embedded in this file.
 The legacy single-key format (IV | ct | tag, no header) cannot be decrypted with the
 current keys; those rows are reported as LEGACY (the app itself returns `false` when
 validating them - see IMPROVEMENTS.md).
@@ -25,13 +26,13 @@ Usage:
   python3 decrypt_passwords.py --self-test
 
   # inspect rows (needs Vault + database; plaintext is masked unless --show)
-  export VAULT_ADDR=http://192.168.2.57:8200
+  export VAULT_ADDR=http://192.168.2.57:28200   # OpenBao (BAO_ADDR also supported)
   export VAULT_TOKEN=...
   export DB_PASSWORD=...
   python3 decrypt_passwords.py --show
 
 Environment:
-  VAULT_ADDR   (default http://192.168.2.57:8200)
+  VAULT_ADDR / BAO_ADDR  (default http://192.168.2.57:28200)
   VAULT_TOKEN  (required unless only --self-test is used)
   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SCHEMA
 
@@ -53,7 +54,7 @@ DOMAIN_NAMES = {v: k for k, v in DOMAIN_CODES.items()}
 IV_BYTES = 12
 TAG_BYTES = 16
 
-VAULT_DEFAULT_ADDR = "http://192.168.2.57:8200"
+VAULT_DEFAULT_ADDR = "http://192.168.2.57:28200"
 VAULT_MOUNT = "ebiz_service"
 KEK_PATH = "ebiz_db/kek"
 DEK_BASE_PATH = "ebiz_db/dek"
@@ -158,7 +159,8 @@ def classify(domain_code: int, value: str, deks: dict) -> str:
 def load_from_vault():
     import hvac
 
-    addr = os.environ.get("VAULT_ADDR", VAULT_DEFAULT_ADDR)
+    addr = (os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR")
+            or VAULT_DEFAULT_ADDR)
     token = os.environ.get("VAULT_TOKEN")
     if not token:
         print("[ERROR] VAULT_TOKEN is required to read KEK/DEK material", file=sys.stderr)

@@ -1,26 +1,30 @@
 # demoApp - Project Knowledge
 
-## Critical Information (Last Updated: 2026-10-31)
+## Critical Information (Last Updated: 2026-11-08)
 
-### Vault Configuration (Updated 2026-10-31)
-- **Server**: `http://192.168.2.57:8200`, kv-v2 mount `ebiz_service`
-- **Token**: `${VAULT_TOKEN}` in `application.properties` (gitignored; the repo ships no properties file — production config lives at `/home/xaan/ws/demoBBS/app/application.properties` and is passed via `--spring.config.additional-location`)
+### KMS Configuration — OpenBao (Updated 2026-11-08)
+- **Server**: `http://192.168.2.57:28200` (OpenBao `2.6.2`, raft storage, Shamir 3/5, unsealed; host `28200` → container `8200`)
+- **Runtime**: Docker container `openbao-openbao-1`; config `/home/xaan/ws/openbao/config/openbao.hcl`; volumes `openbao_data`/`openbao_logs`; `restart: unless-stopped` — a container/host restart requires **manual unseal**
+- **Token**: scoped `demoapp-read` (policies `[default demoapp-read]`, TTL 768h renewable) — apps no longer use a root token
+- **Mount**: `ebiz_service` (kv-v2)
+- **Config File**: `application.properties` (gitignored; the repo ships no properties file — production config lives at `/home/xaan/ws/demoBBS/app/application.properties` and is passed via `--spring.config.additional-location`)
 - **Config Template**: README's "Configuration" section (no real values committed)
-- **Fail-fast**: `false` — but the crypto beans are **eager** and read Vault during context startup. A sealed/unreachable Vault or a missing secret fails startup with `KeyLoadingException` regardless of this setting. An already-running process is unaffected (DEKs cached in memory) — check `vault status` before restarting.
+- **Fail-fast**: `false` — but the crypto beans are **eager** and read the KMS during context startup. A sealed/unreachable OpenBao or a missing secret fails startup with `KeyLoadingException` regardless of this setting. An already-running process is unaffected (DEKs cached in memory) — check OpenBao seal status before restarting.
 - **KEK**: `ebiz_db/kek` (`kek-v{n}`, `current-version`)
 - **DEKs**: `ebiz_db/dek/board`, `ebiz_db/dek/user-pii` (`dek-v{n}`, `current-version`)
 - **Blind-index keys**: `ebiz_db/blind-index/user-phone`, `.../user-rrn` (`key`, unversioned)
-- **Legacy secret**: `ebiz_db/data-enc-key` (`fernet-key`) is **no longer read** by the app; delete it from Vault if still present (its value was exposed in the public repo history)
+- **Legacy secret**: `ebiz_db/data-enc-key` (`fernet-key`) was copied to OpenBao during the cutover because Spring Cloud Vault still fetches it as a property source (`spring.cloud.vault.kv.application-name`). It is not used for encryption. Cleanup is pending — see `VAULT_TO_OPENBAO_MIGRATION_PLAN.md` §7.1.
+- **Previous KMS**: HashiCorp Vault `1.19.5` at `:8200` — stopped after the cutover (2026-11-08). Kept for the rollback/soak window. **Do not rotate keys until the soak ends** (Vault would lack new DEK versions, breaking rollback).
 
-### Encryption (Updated 2026-10-31)
-- **Login password** (`users.password`): BCrypt one-way hash via `PasswordHasher` — no Vault key involved
+### Encryption (Updated 2026-11-08)
+- **Login password** (`users.password`): BCrypt one-way hash via `PasswordHasher` — no KMS key involved
 - **Board password / RRN / phone** (`board.password`, `users.id_no`, `users.phone`): AES-256-GCM **KEK-DEK envelope** encryption, one DEK per domain (`board`=1, `user-pii`=2), unwrapped once at startup and cached in memory
 - **Searchable encrypted values**: per-field HMAC-SHA256 **blind index** (`users.phone_blind_idx`, `users.id_no_blind_idx`) — exact match only
 - **Package**: `com.xaan:vault-crypto:0.0.11` (demoApp `0.0.19`)
 - **Ciphertext**: `Base64URL(domainCode(1B) | keyVersion(1B) | IV(12B) | ciphertext | GCM tag(16B))`
 - **Applied at**: MyBatis TypeHandlers (`BoardPasswordTypeHandler` write-only, `UserPiiTypeHandler` both ways) — services handle plaintext only
-- **Legacy data**: ~46,266 `board.password` rows predate the envelope format; `validate()` returns `false` for them (P3 migration cancelled by decision). See `IMPROVEMENTS.md` P0-3 for the open policy question.
-- **Details**: `VAULT_AND_ENCRYPTION.md` (current architecture), `VAULT_INTEGRATION_DIAGRAM.md` (flows), `vault-crypto/README.md` (library API)
+- **Legacy data**: verified **0 legacy-format rows** on 2026-11-08 (15 non-empty `board.password` values, all envelope v5–v7; 5 users, all BCrypt + envelope v2). The older "~46,266 legacy rows" figure is historical — those values are no longer present.
+- **Details**: `VAULT_AND_ENCRYPTION.md` (current architecture), `VAULT_INTEGRATION_DIAGRAM.md` (flows), `vault-crypto/README.md` (library API), `VAULT_TO_OPENBAO_MIGRATION_PLAN.md` (KMS migration)
 
 ### KEK-DEK Envelope Encryption (Done; design 2026-08-15 → operational 2026-08-20)
 - **Goal**: Replace the single flat Vault key above with a KEK-DEK envelope model — a Vault-held KEK wraps one DEK per service domain (`board`, `user-pii`), and each domain's DEK is unwrapped once at startup and cached in memory so request-time encrypt/decrypt never calls Vault.
@@ -76,6 +80,16 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 ### Build Scripts
 - **build-with-env.sh**: Sets JAVA_HOME automatically
 - **deploy.sh**: Builds with Java 21 and deploys to production
+
+### Recent Changes (2026-11-08)
+
+1. **KMS cutover to OpenBao 2.6.2 (operator-executed).** Both app instances now point at `http://192.168.2.57:28200`:
+   - `.56` restarted 2026-11-07 23:56, `.57` restarted 2026-11-08 00:09; both booted with `PasswordService initialized … KEK-DEK …` and `/actuator/health` reports `vault: UP`.
+   - OpenBao holds the same 6 secrets with identical field layouts: `kek` (`kek-v1`, current 1), `dek/board` (`dek-v1..v7`, current 7), `dek/user-pii` (`dek-v1..v2`, current 2), both blind-index keys, and the legacy `data-enc-key`.
+   - The app token is now scoped (`token-demoapp`, policy `demoapp-read`, TTL 768h renewable) instead of root.
+   - HashiCorp Vault `1.19.5` on `:8200` was stopped. The legacy `data-enc-key` is still present/read as a property source; cleanup and Vault decommission are pending.
+   - DB check on 2026-11-08: 15 non-empty `board.password` values, all envelope format (v5–v7); 5 users, all BCrypt + `user-pii` envelope v2; **0 legacy-format rows**. Two new board rows and one new user created after the cutover confirm writes/encryption through OpenBao.
+   - Plan/record: `VAULT_TO_OPENBAO_MIGRATION_PLAN.md` (status updated to completed with an execution-results section).
 
 ### Recent Changes (2026-10-31)
 
@@ -178,12 +192,13 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 ### Important Notes
 - Password/PII crypto all lives in `vault-crypto`: BCrypt (`PasswordHasher`), AES-256-GCM KEK-DEK envelope (`EnvelopeCryptoService`), HMAC blind index (`BlindIndexService`), MyBatis base handler (`EnvelopeCryptoTypeHandler`). demoApp services handle plaintext only.
 - vault-crypto: sibling checkout `../vault-crypto` (built and published to `mavenLocal` separately; publish it before building demoApp)
-- The repo contains **no** `application.properties` (gitignored). Local runs need one plus reachable Vault + PostgreSQL.
-- Python tooling: `decrypt_passwords.py` (envelope/legacy/BCrypt classification, `--self-test`), `bootstrap_kek_dek.py`, `bootstrap_blind_index_keys.py` (the bootstrap scripts only print `vault kv put` commands)
+- The repo contains **no** `application.properties` (gitignored). Local runs need one plus a reachable OpenBao and PostgreSQL.
+- Python tooling: `decrypt_passwords.py` (envelope/legacy/BCrypt classification, `--self-test`), `bootstrap_kek_dek.py`, `bootstrap_blind_index_keys.py` (the bootstrap scripts only print `vault kv put` commands; the same commands work against OpenBao)
 - Java 8 is the system default - always use Java 21 for builds
 
 ### File References
 - **Vault/Encryption Docs**: `VAULT_AND_ENCRYPTION.md` (current architecture), `VAULT_INTEGRATION_DIAGRAM.md` (flows)
+- **KMS Migration Plan/Record**: `VAULT_TO_OPENBAO_MIGRATION_PLAN.md` (Vault → OpenBao cutover, completed 2026-11-08)
 - **Improvement Backlog**: `IMPROVEMENTS.md` (open items + resolved history)
 - **KEK-DEK Envelope Encryption Plan**: `KEK_DEK_ENCRYPTION_PLAN.md` (design + phased plan; P3 data migration cancelled 2026-08-19; P5 rotation core done 2026-08-20)
 - **Key Rotation Runbook**: `KEY_ROTATION_RUNBOOK.md` (step-by-step KEK/DEK rotation procedures with Mermaid sequence diagrams, checklists, rollback scenarios; added 2026-08-20)

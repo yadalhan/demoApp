@@ -27,7 +27,7 @@ Vault의 dek-v{n} 필드(KekService):          kekVersion(1B) | IV | ciphertext 
 
 ## 1. 사전 준비
 
-- **Vault 접근**: `VAULT_ADDR`(운영은 `http://192.168.2.57:8200`), `VAULT_TOKEN` 환경변수 설정. `production-infra-manual-execution` 원칙에 따라 운영 Vault에 쓰는 명령은 항상 운영자가 직접 실행한다.
+- **Vault 접근**: `VAULT_ADDR`(운영은 OpenBao `http://192.168.2.57:28200`), `VAULT_TOKEN` 환경변수 설정. `production-infra-manual-execution` 원칙에 따라 운영 OpenBao에 쓰는 명령은 항상 운영자가 직접 실행한다.
 - **백업**: kv-v2는 자체적으로 시크릿 버전 이력을 남기지만(`vault kv get -version=N ...`), 로테이션 직전에 `vault kv get`으로 현재 값을 별도로 기록해 두면 대조가 쉽다.
 - **동시 실행 방지**: 이 문서의 절차는 한 번에 한 명의 운영자가 순서대로 진행한다고 가정한다. `VaultDekProvider.store()`/`VaultKekProvider.store()`는 "전체 읽기 → 병합 → 전체 쓰기" 방식이라 동시에 두 곳에서 쓰면 한쪽이 유실될 수 있다.
 - **트리거 방식 (2026-08-20 기준 구현 완료, 운영 검증됨)**: DEK 로테이션/재암호화는 `DekOpsRunner`가 담당하며, 두 가지 방식으로 실행할 수 있다.

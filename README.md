@@ -68,7 +68,7 @@ bootstrap_blind_index_keys.py     # blind index HMAC 키 생성 helper (bootstra
 - Java 21 or higher
 - Gradle 8.7 or higher
 - PostgreSQL database (optional - can use H2 for development)
-- HashiCorp Vault (optional - for production secrets management)
+- OpenBao 2.6.2 (or a Vault-compatible KMS) - for production secrets management
 
 ## Configuration
 
@@ -87,34 +87,34 @@ spring.datasource.password=${DB_PASSWORD:changeme}
 mybatis.configuration.map-underscore-to-camel-case=true
 ```
 
-### Vault Configuration (Updated 2026-10-31)
+### KMS Configuration — OpenBao (Updated 2026-11-08)
 
-The application uses **HashiCorp Vault kv-v2** (versioned key-value) backend:
+The application uses **OpenBao 2.6.2** (Vault-compatible kv-v2) as its KMS:
 
 ```properties
-# Vault Configuration (connection only)
-spring.cloud.vault.uri=http://192.168.2.57:8200
+# KMS configuration (connection only; OpenBao is API-compatible with Vault)
+spring.cloud.vault.uri=http://192.168.2.57:28200
 spring.cloud.vault.token=${VAULT_TOKEN}
 spring.cloud.vault.fail-fast=false
 ```
 
-> **Startup dependency**: the KEK/DEK/blind-index beans are eager and read Vault while the context
-> is starting, so a sealed/unreachable Vault (or a missing secret) fails startup with
+> **Startup dependency**: the KEK/DEK/blind-index beans are eager and read the KMS while the context
+> is starting, so a sealed/unreachable OpenBao (or a missing secret) fails startup with
 > `KeyLoadingException` even though `fail-fast=false`. An already-running process is unaffected
-> because DEKs are cached in memory — check `vault status` before restarting/redeploying.
+> because DEKs are cached in memory — check OpenBao seal status before restarting/redeploying.
 
-### Vault kv-v2 Integration (KEK-DEK envelope encryption, since 2026-08-19)
+### KMS (OpenBao) kv-v2 Integration — KEK-DEK envelope encryption (since 2026-08-19; OpenBao since 2026-11-08)
 - **Mount**: `ebiz_service` (kv-v2)
 - **KEK path**: `ebiz_db/kek` — master key, only used to wrap/unwrap DEKs
 - **DEK paths**: `ebiz_db/dek/board`, `ebiz_db/dek/user-pii` — one wrapped DEK per service domain, versioned
 - **Blind index paths**: `ebiz_db/blind-index/user-phone`, `ebiz_db/blind-index/user-rrn` — one HMAC key per searchable field, unversioned (see `vault-crypto/README.md`의 "4. Blind Index")
-- **Server**: 192.168.2.57:8200
-- See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch Vault themselves
+- **Server**: `http://192.168.2.57:28200` (OpenBao 2.6.2; the previous Vault at `:8200` is stopped)
+- See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch the KMS themselves
 
 ### How It Works
 1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.11`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
-2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from Vault once at startup and caches it in memory
-3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because ~46k legacy rows predate the envelope format and would break ordinary list/view reads if decrypted on every `SELECT`; `users.id_no`/`phone` are wired both ways since that table has no legacy data
+2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from OpenBao once at startup and caches it in memory
+3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because legacy rows predated the envelope format and would break ordinary list/view reads if decrypted on every `SELECT` (0 such rows remain as of 2026-11-08, but the write-only wiring is retained); `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
 5. Passwords/PII stored as Base64-encoded encrypted strings (with a `domainCode`+`keyVersion` header) in DB; phone/RRN additionally get a deterministic HMAC in a companion `*_blind_idx` column for exact-match search
 6. Python verification script (`decrypt_passwords.py`) supports the current envelope format (loads
@@ -257,9 +257,9 @@ CREATE TABLE ebiz.board (
 
 2. **암호화된 컬럼 검색 (Blind Index)**: 전화번호/주민등록번호는 AES-GCM이라 등호 검색이 불가능하므로, HMAC-SHA256 기반 결정적 인덱스(`phone_blind_idx`/`id_no_blind_idx`)를 별도 컬럼에 저장 - `/users` 검색이 이 컬럼을 조회한다. 정확히 일치하는 값만 찾을 수 있고(부분 검색 불가), DEK/KEK와 무관한 별도 키를 씀(`vault-crypto`의 `BlindIndexService`)
 
-3. **Vault Integration**: External secrets management with Spring Cloud Vault
-   - Configured to connect to Vault server at `http://192.168.2.57:8200`
-   - Fail-fast enabled for production safety
+3. **KMS Integration**: External secrets management with Spring Cloud Vault
+   - Connected to OpenBao 2.6.2 at `http://192.168.2.57:28200` (Vault-compatible API)
+   - Scoped `demoapp-read` token; fail-fast enabled for production safety
 4. **Input Validation**: Server-side validation (주민등록번호 체크섬 검증, 전화번호 숫자만 허용 포함)
 5. **SQL Injection Protection**: Using MyBatis prepared statement bind parameters (`#{...}`)
 
@@ -320,6 +320,15 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### KMS cutover: HashiCorp Vault → OpenBao 2.6.2 (2026-11-08, no app version bump)
+
+**인프라 전환**: 두 인스턴스(`.56`, `.57`)의 `spring.cloud.vault.uri`를
+`http://192.168.2.57:28200`(OpenBao)로 변경하고 재기동했다. KEK/DEK/blind-index 시크릿은 값 변형 없이
+OpenBao kv-v2(`ebiz_service`)로 복사했으며, DB 암호문/애플리케이션 코드는 변경하지 않았다.
+앱 토큰은 root에서 `demoapp-read`(TTL 768h, renewable)로 축소했다. 이전 Vault `1.19.5`(`:8200`)는 중지했다.
+검증: 두 인스턴스 health UP(`vault: UP`), 기동 로그 정상, 게시글/사용자 신규 데이터가 OpenBao 키로
+암호화됨. 레거시 포맷 행은 0건. 상세: [VAULT_TO_OPENBAO_MIGRATION_PLAN.md](VAULT_TO_OPENBAO_MIGRATION_PLAN.md).
 
 ### Docs & repository hygiene (2026-10-31, no version bump)
 
