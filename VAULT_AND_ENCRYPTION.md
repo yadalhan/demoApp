@@ -1,6 +1,6 @@
 # Vault Configuration and Encryption (Current Architecture)
 
-> **Status: current as of 2026-11-08 (demoApp `0.0.19`, vault-crypto `0.0.11`, KMS = OpenBao `2.6.2`).**
+> **Status: current as of 2026-11-08 (demoApp `0.0.20`, vault-crypto `2.0.1`, KMS = OpenBao `2.6.2`).**
 >
 > 이 문서는 **현행** KEK-DEK 봉투 암호화 구조를 설명한다. 2026-05 ~ 2026-08 초에 쓰인
 > 단일 키(`fernet-key`) 방식 문서는 폐기되었다 — 해당 설계의 분석과 전환 이력은
@@ -10,7 +10,7 @@
 
 ## 1. 한눈에 보기
 
-demoApp의 암호화는 전부 `com.xaan:vault-crypto:0.0.11` 라이브러리에 위임되어 있고, 앱 코드는
+demoApp의 암호화는 전부 `com.xaan:vault-crypto:2.0.1` 라이브러리에 위임되어 있고, 앱 코드는
 평문(plain Java `String`)만 다룬다. 세 가지 서로 다른 원시함수를 쓴다.
 
 | 대상 | 방식 | 키 | 적용 지점 |

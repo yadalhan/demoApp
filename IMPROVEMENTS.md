@@ -1,6 +1,6 @@
 # Improvement Backlog — demoApp & vault-crypto
 
-> **Last updated: 2026-11-08** (demoApp `0.0.19`, vault-crypto `0.0.11`, KMS = OpenBao `2.6.2`).
+> **Last updated: 2026-11-08** (demoApp `0.0.20`, vault-crypto `2.0.1`, KMS = OpenBao `2.6.2`).
 > 이 문서는 2026-05-08의 단일 키 시절 권고안을 **현행 구조 기준으로 재정리**한 것이다.
 > 이미 해결된 항목은 §3에 이력으로 남겨둔다.
 

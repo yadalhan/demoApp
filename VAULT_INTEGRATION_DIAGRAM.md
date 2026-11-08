@@ -1,6 +1,6 @@
 # Vault Integration & Crypto Flow (Current Architecture)
 
-> **Status: current as of 2026-11-08 (demoApp `0.0.19`, vault-crypto `0.0.11`; KMS = OpenBao `2.6.2`).**
+> **Status: current as of 2026-11-08 (demoApp `0.0.20`, vault-crypto `2.0.1`; KMS = OpenBao `2.6.2`).**
 > 이 문서는 KEK-DEK 도입 이후의 실제 흐름을 도식화한다. 2026-05-08 단일 키(`fernet-key`) 시절의
 > 다이어그램은 폐기되었다 — 배경은 [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) 참고.
 

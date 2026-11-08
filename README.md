@@ -112,7 +112,7 @@ spring.cloud.vault.fail-fast=false
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch the KMS themselves
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:0.0.11`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
+1. **vault-crypto package** (`com.xaan:vault-crypto:2.0.1`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from OpenBao once at startup and caches it in memory
 3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because legacy rows predated the envelope format and would break ordinary list/view reads if decrypted on every `SELECT` (0 such rows remain as of 2026-11-08, but the write-only wiring is retained); `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
@@ -126,7 +126,7 @@ Encryption functionality is extracted into a separate package:
 - **Repository**: `vault-crypto/` (별도 프로젝트)
 - **Build**: `gradle.bat clean build publishToMavenLocal` (Windows) 또는 `./gradlew clean build publishToMavenLocal` (Linux)
 - **Usage**: See `vault-crypto/README.md` for details
-- **Build order**: demoApp depends on the published `com.xaan:vault-crypto:0.0.11`, so publish the
+- **Build order**: demoApp depends on the published `com.xaan:vault-crypto:2.0.1`, so publish the
   library first (`publishToMavenLocal`); otherwise dependency resolution fails when `~/.m2` only has
   an older version
 
@@ -193,7 +193,7 @@ export PATH=$JAVA_HOME/bin:/opt/gradle/gradle-8.7/bin:$PATH
 
 2. **Run the JAR:**
    ```bash
-   java -jar build/libs/xaandemo-0.0.19.jar
+   java -jar build/libs/xaandemo-0.0.20.jar
    ```
 
 3. **Access the application:**
@@ -249,7 +249,7 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 주민등록번호 / 전화번호**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: 암/복호화는 MyBatis `TypeHandler`(`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`)가 Mapper 컬럼 단위로 투명하게 처리 - `BoardService`/`UserService`는 평문만 다루고 `vault-crypto`를 직접 호출하지 않음. `PasswordService.java`는 BCrypt 해시/검증, board 비밀번호 `validate()`, blind index 계산만 남아 있음
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음). BCrypt는 외부 키가 필요 없어 Vault와 무관
-   - Package: `com.xaan:vault-crypto:0.0.11`
+   - Package: `com.xaan:vault-crypto:2.0.1`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
    - 암호화 컬럼을 다루는 조회/조회 코드를 새로 짤 때는 [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md) 참고 - 단건/목록/검색/캐싱 상황별 패턴과, 실제로 겪었던 실수(이중 암호화, 캐시에 평문 노출, self-invocation 등) 정리
@@ -287,14 +287,14 @@ This script will:
 ### Docker (Example)
 ```dockerfile
 FROM openjdk:21-jdk-slim
-COPY build/libs/xaandemo-0.0.19.jar app.jar
+COPY build/libs/xaandemo-0.0.20.jar app.jar
 ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ### Traditional Deployment
 1. Build the JAR: `gradle.bat clean build` (Windows) 또는 `./gradlew clean build` (Linux)
-2. Copy JAR to server: `scp build/libs/xaandemo-0.0.19.jar user@server:/app/`
-3. Run with: `java -jar xaandemo-0.0.19.jar`
+2. Copy JAR to server: `scp build/libs/xaandemo-0.0.20.jar user@server:/app/`
+3. Run with: `java -jar xaandemo-0.0.20.jar`
 
 ### Production Server Details
 - **Host**: 192.168.2.56
@@ -321,7 +321,12 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 ## Release History
 
-### KMS cutover: HashiCorp Vault → OpenBao 2.6.2 (2026-11-08, no app version bump)
+### v0.0.20 (2026-11-08)
+
+**vault-crypto `2.0.1` 적용.** 라이브러리 버전을 `0.0.11 → 2.0.1`로 재정렬하고(OpenBao 전환 문서 반영,
+API/동작 변경 없음) demoApp 의존성을 맞췄다. 애플리케이션 코드 변경은 없다. `xaandemo-0.0.20.jar`로 빌드/배포.
+
+### KMS cutover: HashiCorp Vault → OpenBao 2.6.2 (2026-11-08)
 
 **인프라 전환**: 두 인스턴스(`.56`, `.57`)의 `spring.cloud.vault.uri`를
 `http://192.168.2.57:28200`(OpenBao)로 변경하고 재기동했다. KEK/DEK/blind-index 시크릿은 값 변형 없이

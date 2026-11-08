@@ -20,7 +20,7 @@
 - **Login password** (`users.password`): BCrypt one-way hash via `PasswordHasher` — no KMS key involved
 - **Board password / RRN / phone** (`board.password`, `users.id_no`, `users.phone`): AES-256-GCM **KEK-DEK envelope** encryption, one DEK per domain (`board`=1, `user-pii`=2), unwrapped once at startup and cached in memory
 - **Searchable encrypted values**: per-field HMAC-SHA256 **blind index** (`users.phone_blind_idx`, `users.id_no_blind_idx`) — exact match only
-- **Package**: `com.xaan:vault-crypto:0.0.11` (demoApp `0.0.19`)
+- **Package**: `com.xaan:vault-crypto:2.0.1` (demoApp `0.0.20`)
 - **Ciphertext**: `Base64URL(domainCode(1B) | keyVersion(1B) | IV(12B) | ciphertext | GCM tag(16B))`
 - **Applied at**: MyBatis TypeHandlers (`BoardPasswordTypeHandler` write-only, `UserPiiTypeHandler` both ways) — services handle plaintext only
 - **Legacy data**: verified **0 legacy-format rows** on 2026-11-08 (15 non-empty `board.password` values, all envelope v5–v7; 5 users, all BCrypt + envelope v2). The older "~46,266 legacy rows" figure is historical — those values are no longer present.
@@ -33,7 +33,7 @@
 - **`VaultCryptoService` deleted (2026-08-19, vault-crypto v0.0.3)**: the old single-key class itself was removed from the vault-crypto library (not just deprecated) — any other project still using it is being ignored per the user's decision. vault-crypto's only public API now is the `envelope` package.
 - **Code status (2026-08-19)**: P0-P2 all done. **P0 confirmed complete**: the user ran `bootstrap_kek_dek.py`'s output against the production Vault (`ebiz_service/data/ebiz_db/kek`, `.../dek/board`, `.../dek/user-pii`) with no errors; a subsequent `gradle test` run showed `DemoApplicationTests.contextLoads()` failing on a Postgres connection error rather than `KeyLoadingException`, confirming the KEK/DEK load successfully now. P1 (vault-crypto `envelope` package, single-key class removed) and P2 (demoApp wiring, legacy-free) are implemented, build, and pass tests.
 - **KEK rotation support added (2026-08-20, P5)**: the original `KekService` held a single flat KEK with no version concept - rotating it in Vault would have broken every domain's DEK unwrap at once (total outage). `KekService` was rewritten to hold every loaded KEK version (same pattern as `DomainKeyRing`), and wrapped-DEK bytes now carry a `kekVersion` header so `unwrap()` picks the right version. Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault, versioned like DEKs) and `KekRotationSupport` (issue a new KEK version, then re-wrap a domain's DEKs under it). Added `retire(...)` to both `DekProvider` and `KekProvider`. **Breaking**: the wrapped-DEK format changed (adds a 1-byte version prefix), so the KEK/DEK secrets from P0 had to be regenerated via the updated `bootstrap_kek_dek.py`. **Done**: the user re-ran it against the production Vault on 2026-08-20 and confirmed no errors - the production `kek`/`dek/board`/`dek/user-pii` secrets are now in the v0.0.6 versioned format. Full rotation procedure (both KEK and DEK) with sequence-diagram procedure diagrams: `KEY_ROTATION_RUNBOOK.md`.
-- **Package/version**: `com.xaan:vault-crypto:0.0.11` (current; published to `mavenLocal`; demoApp itself currently at `0.0.19` - see Release History in each project's `README.md` for the full bump history)
+- **Package/version**: `com.xaan:vault-crypto:2.0.1` (current; published to `mavenLocal`; demoApp itself currently at `0.0.20` - see Release History in each project's `README.md` for the full bump history)
 
 ### Production Deployment
 - **Server**: `192.168.2.56`
@@ -41,7 +41,7 @@
 - **App Path**: `/home/xaan/ws/demoBBS/app`
 - **Log Path**: `/home/xaan/ws/demoBBS/log`
 - **Deploy Script**: `./deploy.sh` (builds with Java 21, deploys JAR, restarts app)
-- **JAR Name**: `xaandemo-0.0.19.jar`
+- **JAR Name**: `xaandemo-0.0.20.jar`
 - **App URL**: `http://192.168.2.56:8080`
 
 ### Database
@@ -90,6 +90,10 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
    - HashiCorp Vault `1.19.5` on `:8200` was stopped. The legacy `data-enc-key` is still present/read as a property source; cleanup and Vault decommission are pending.
    - DB check on 2026-11-08: 15 non-empty `board.password` values, all envelope format (v5–v7); 5 users, all BCrypt + `user-pii` envelope v2; **0 legacy-format rows**. Two new board rows and one new user created after the cutover confirm writes/encryption through OpenBao.
    - Plan/record: `VAULT_TO_OPENBAO_MIGRATION_PLAN.md` (status updated to completed with an execution-results section).
+2. **vault-crypto `2.0.1` / demoApp `0.0.20` (2026-11-08).** vault-crypto docs updated for OpenBao, version
+   realigned `0.0.11 → 2.0.1` (no API/behavior change), rebuilt/tested (21 tests) and published to `mavenLocal`.
+   demoApp depends on `2.0.1`, bumped to `0.0.20`, built and deployed to `.56`; verified health/UI and OpenBao
+   key loading.
 
 ### Recent Changes (2026-10-31)
 
