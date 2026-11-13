@@ -6,23 +6,22 @@ import com.xaan.vault.crypto.blindindex.VaultBlindIndexKeyProvider;
 import com.xaan.vault.crypto.envelope.DekProvider;
 import com.xaan.vault.crypto.envelope.DekRotationSupport;
 import com.xaan.vault.crypto.envelope.EnvelopeCryptoService;
-import com.xaan.vault.crypto.envelope.KekProvider;
-import com.xaan.vault.crypto.envelope.KekRotationSupport;
-import com.xaan.vault.crypto.envelope.KekService;
+import com.xaan.vault.crypto.envelope.KeyWrapper;
+import com.xaan.vault.crypto.envelope.TransitKeyWrapper;
+import com.xaan.vault.crypto.envelope.TransitKekRotationSupport;
 import com.xaan.vault.crypto.envelope.VaultDekProvider;
-import com.xaan.vault.crypto.envelope.VaultKekProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.vault.core.VaultOperations;
 
 /**
- * KEK-DEK envelope encryption wiring. The KEK stays in Vault and only wraps DEKs;
- * each service domain gets its own DEK, unwrapped once here at startup and cached
- * in the resulting {@link EnvelopeCryptoService} bean so request-time encrypt/decrypt
- * never calls Vault. Both the KEK and each domain's DEK are versioned in Vault so a
- * rotation can add a new version without breaking data encrypted under an older one
- * - see KEY_ROTATION_RUNBOOK.md for the operational procedure.
+ * KEK-DEK envelope encryption wiring.
+ *
+ * <p>2.1.0부터 KEK는 OpenBao Transit 엔진에 있다(exportable=false). 앱은 wrapped DEK를
+ * {@code transit/decrypt}로 풀어 DEK만 메모리에 캐시하며, KEK 평문은 앱/백업에 남지 않는다.
+ * 각 도메인 DEK는 도메인별로 분리되어 있고, 암호문 헤더의 버전으로 회전 후에도 계속 복호화된다.
+ * 절차는 KEY_ROTATION_RUNBOOK.md 참고.
  */
 @Configuration
 public class CryptoConfig {
@@ -30,16 +29,13 @@ public class CryptoConfig {
     public static final byte BOARD_DOMAIN_CODE = 1;
     public static final byte USER_PII_DOMAIN_CODE = 2;
 
+    /** KEK는 Transit 안에 있고 여기로 내려오지 않는다. wrapped DEK만 transit/decrypt로 푼다. */
     @Bean
-    public KekProvider kekProvider(
+    public KeyWrapper keyWrapper(
             VaultOperations vaultOperations,
-            @Value("${vault.kek.path:ebiz_service/data/ebiz_db/kek}") String kekPath) {
-        return new VaultKekProvider(vaultOperations, kekPath);
-    }
-
-    @Bean
-    public KekService kekService(KekProvider kekProvider) {
-        return KekService.load(kekProvider);
+            @Value("${vault.transit.mount:transit}") String transitMount,
+            @Value("${vault.transit.key:kek}") String transitKey) {
+        return new TransitKeyWrapper(vaultOperations, transitMount, transitKey);
     }
 
     @Bean
@@ -50,23 +46,27 @@ public class CryptoConfig {
     }
 
     @Bean
-    public EnvelopeCryptoService boardCryptoService(KekService kekService, DekProvider dekProvider) {
-        return EnvelopeCryptoService.forDomain(BOARD_DOMAIN_CODE, "board", kekService, dekProvider);
+    public EnvelopeCryptoService boardCryptoService(KeyWrapper keyWrapper, DekProvider dekProvider) {
+        return EnvelopeCryptoService.forDomain(BOARD_DOMAIN_CODE, "board", keyWrapper, dekProvider);
     }
 
     @Bean
-    public EnvelopeCryptoService userPiiCryptoService(KekService kekService, DekProvider dekProvider) {
-        return EnvelopeCryptoService.forDomain(USER_PII_DOMAIN_CODE, "user-pii", kekService, dekProvider);
+    public EnvelopeCryptoService userPiiCryptoService(KeyWrapper keyWrapper, DekProvider dekProvider) {
+        return EnvelopeCryptoService.forDomain(USER_PII_DOMAIN_CODE, "user-pii", keyWrapper, dekProvider);
     }
 
     @Bean
-    public DekRotationSupport dekRotationSupport(KekService kekService, DekProvider dekProvider) {
-        return new DekRotationSupport(kekService, dekProvider);
+    public DekRotationSupport dekRotationSupport(KeyWrapper keyWrapper, DekProvider dekProvider) {
+        return new DekRotationSupport(keyWrapper, dekProvider);
     }
 
+    /** KEK 회전: transit/keys/kek/rotate + 각 도메인 wrapped DEK rewrap (데이터 재암호화 없음). */
     @Bean
-    public KekRotationSupport kekRotationSupport(KekProvider kekProvider) {
-        return new KekRotationSupport(kekProvider);
+    public TransitKekRotationSupport transitKekRotationSupport(
+            VaultOperations vaultOperations,
+            @Value("${vault.transit.mount:transit}") String transitMount,
+            @Value("${vault.transit.key:kek}") String transitKey) {
+        return new TransitKekRotationSupport(vaultOperations, transitMount, transitKey);
     }
 
     @Bean

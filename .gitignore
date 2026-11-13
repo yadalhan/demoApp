@@ -89,3 +89,4 @@ src/main/resources/application.properties
 ### Python cache ###
 __pycache__/
 *.pyc
+dek_transit_backup.json

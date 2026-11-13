@@ -1,5 +1,10 @@
 # KEK / DEK 키 로테이션 런북
 
+> **2026-11-13 변경: KEK가 OpenBao Transit으로 이관됐다(vault-crypto 2.1.0, demoApp 0.0.21).**
+> KEK 로테이션은 아래 §3(레거시 KV 방식) 대신 **`transit/keys/kek/rotate` + `TransitKekRotationSupport.rewrapAll()`**
+> 으로 수행한다. DEK/데이터는 그대로이며 앱 재시작도 필요 없다. 상세는 `vault-crypto/TRANSIT_KEK.md` §5.
+> KV KEK 절차(§3)는 롤백/레거시 환경에서만 유효하다.
+
 `KEK_DEK_ENCRYPTION_PLAN.md`에서 설계한 KEK-DEK 봉투 암호화 모델(vault-crypto `0.0.7`, demoApp `0.0.9` 기준)에서, KEK와 DEK를 각각 실제로 교체(로테이션)할 때 따라야 할 절차를 정리한다. 코드 근거는 `vault-crypto`의 `com.xaan.vault.crypto.envelope` 패키지(`KekService`, `KekProvider`/`VaultKekProvider`, `KekRotationSupport`, `DekProvider`/`VaultDekProvider`, `DekRotationSupport`, `DomainKeyRing`, `EnvelopeCryptoService`)와 demoApp의 `DekOpsRunner`/`DekReencryptionService`/`dek_ops_batch.sh`/`dek_ops_batch.bat`(2026-08-20에 구현, 운영 환경에서 board/user-pii 두 도메인 모두 실제 검증 완료)다.
 
 > **DEK 로테이션 절차는 2026-08-20에 운영 서버에서 실제로 실행해 검증했다** (아래 §2). 그 과정에서 발견/수정한 것들: (1) 레거시(구 단일 키) 포맷 행을 재암호화 실패로 잘못 집계하던 버그, (2) `dek_ops_batch.bat`가 ssh로 빈 문자열 인자를 넘길 때 뒤 인자가 앞으로 밀리며 `reencrypt`가 `rotate`로 둔갑하던 버그(`-` sentinel로 해결), (3) **rotate와 reencrypt를 같은 실행에서 함께 하면 안 된다는 것** — 아래 경고 참고. KEK 로테이션(§3)은 아직 실제로 실행해보지 않았다(코드/절차만 준비됨).
