@@ -121,6 +121,9 @@ KEK를 KV에 두던 이전 방식은 레거시이며, 이관 스크립트(`migra
 BAO_TOKEN=<admin> python3 migrate_dek_to_transit.py --backup ./dek_transit_backup.json
 
 # 롤백이 필요하면 백업의 dek-v{n} 값을 그대로 다시 kv put 한다(앱 0.0.20 + KV KEK 필요)
+
+> 2026-11-13: 이관 검증 후 KV의 `kek` 시크릿을 삭제했다(앱 토큰은 원래부터 403). 이 시점부터 KV KEK 방식으로의
+> 롤백은 불가능하며, 복구 수단은 OpenBao **Raft 스냅샷 + unseal 키**뿐이다.
 ```
 
 ### (레거시) KV KEK 방식 — since 2026-08-19
