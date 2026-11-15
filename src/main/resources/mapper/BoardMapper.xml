@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  게시글 SQL. Java 코드(BoardMapper.java)에는 SQL 문자열이 없다.
+
+  - password는 쓰기 경로에서만 BoardPasswordTypeHandler를 거친다.
+  - SELECT는 암호문을 그대로 반환한다(복호화하지 않음). 비밀번호 확인은
+    PasswordService.validateBoardPassword()가 EnvelopeCryptoService.validate()로 처리한다.
+  - 제목/내용 수정(updateTitleContent)과 비밀번호 교체(updatePassword)를 분리해
+    이미 암호화된 값을 다시 암호화하는 사고를 막는다.
+-->
+<mapper namespace="com.xaan.demo.domain.mapper.BoardMapper">
+
+    <resultMap id="boardMap" type="com.xaan.demo.domain.entity.Board">
+        <id column="id" property="id"/>
+        <result column="title" property="title"/>
+        <result column="content" property="content"/>
+        <result column="author" property="author"/>
+        <result column="password" property="password"/>
+        <result column="created_date" property="createdDate"/>
+        <result column="modified_date" property="modifiedDate"/>
+    </resultMap>
+
+    <resultMap id="boardSummaryMap" type="com.xaan.demo.dto.BoardSummaryDto">
+        <result column="postDate" property="postDate"/>
+        <result column="contentSize" property="contentSize"/>
+        <result column="articles" property="articles"/>
+        <result column="lastTime" property="lastTime"/>
+    </resultMap>
+
+    <sql id="columns">id, title, content, author, password, created_date, modified_date</sql>
+
+    <insert id="insert" parameterType="com.xaan.demo.domain.entity.Board"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        insert into board (title, content, author, password, created_date, modified_date)
+        values (#{title}, #{content}, #{author},
+                #{password,typeHandler=com.xaan.demo.config.mybatis.BoardPasswordTypeHandler}, now(), now())
+    </insert>
+
+    <select id="findById" parameterType="long" resultMap="boardMap">
+        select <include refid="columns"/> from board where id = #{id}
+    </select>
+
+    <select id="findAllByOrderByIdDesc" resultMap="boardMap">
+        select <include refid="columns"/> from board order by id desc
+    </select>
+
+    <select id="findTop100ByOrderByIdDesc" resultMap="boardMap">
+        select <include refid="columns"/> from board order by id desc limit 100
+    </select>
+
+    <select id="findRecent" resultMap="boardMap">
+        select <include refid="columns"/> from board order by id desc limit #{limit}
+    </select>
+
+    <update id="updateTitleContent">
+        update board set title = #{title}, content = #{content}, modified_date = now() where id = #{id}
+    </update>
+
+    <update id="updatePassword">
+        update board
+           set password = #{password,typeHandler=com.xaan.demo.config.mybatis.BoardPasswordTypeHandler}
+         where id = #{id}
+    </update>
+
+    <!-- 재암호화 배치 전용: 이미 암호화된 ciphertext를 그대로 저장한다(TypeHandler 미적용) -->
+    <update id="updatePasswordRaw">
+        update board set password = #{password} where id = #{id}
+    </update>
+
+    <select id="getBoardSummary" resultMap="boardSummaryMap">
+        select created_date::date                      as "postDate",
+               sum(length(content))                    as "contentSize",
+               count(id)                               as "articles",
+               to_char(max(created_date), 'yyyy-mm-dd hh24:mi:ss') as "lastTime"
+          from ebiz.board
+         group by created_date::date
+         order by 1 desc
+    </select>
+</mapper>

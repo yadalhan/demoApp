@@ -6,7 +6,7 @@ A Spring Boot demo application with comprehensive features for board/article man
 
 - **Spring Boot 3.4.0** with Java 21
 - **PostgreSQL** database integration
-- **MyBatis** for data persistence (annotation-mapped mappers, no JPA/Hibernate)
+- **MyBatis** for data persistence (XML-mapped mappers, SQL fully separated from Java, no JPA/Hibernate)
 - **Thymeleaf** templating engine for server-side rendering
 - **Board/Article management system** with CRUD operations
 - **User directory with search** - name (부분 일치), phone/RRN (정확 일치 via blind index)
@@ -36,9 +36,11 @@ src/main/java/com/xaan/demo/
 │   ├── entity/
 │   │   ├── Board.java            # Board entity
 │   │   └── User.java             # User entity (phone, blind index 필드 포함)
-│   └── mapper/                   # MyBatis mapper 인터페이스 (annotation 기반, XML 없음)
+│   └── mapper/                   # MyBatis mapper 인터페이스 (SQL 없음)
 │       ├── BoardMapper.java
-│       └── UserMapper.java
+│       ├── UserMapper.java
+│       ├── StatsMapper.java
+│       └── TestMapper.java
 ├── dto/
 │   ├── BoardResponseDto.java, BoardSaveRequestDto.java, BoardUpdateRequestDto.java
 │   ├── UserRegisterRequestDto.java, UserResponseDto.java
@@ -49,6 +51,12 @@ src/main/java/com/xaan/demo/
     └── UserSearchCacheService.java # /users2용 @Cacheable 전담 빈 (self-invocation 회피 목적으로 분리)
 
 src/main/resources/
+├── mapper/                       # MyBatis XML (SQL 전부 여기)
+│   ├── BoardMapper.xml
+│   ├── UserMapper.xml
+│   ├── StatsMapper.xml
+│   └── TestMapper.xml
+├── sql/test-queries.sql          # 성능 테스트 페이지용 쿼리 목록
 ├── application.properties        # Application configuration
 └── templates/                    # Thymeleaf templates
     ├── auth/                    # 로그인/회원가입
@@ -343,6 +351,20 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### 0.0.22 (2026-11-15)
+
+**MyBatis SQL을 Java 코드에서 완전히 분리해 XML로 이관.**
+
+- `domain/mapper/*.java`는 인터페이스만 남기고 `@Insert`/`@Select`/`@Update`/`@Results`를 제거
+- `src/main/resources/mapper/{Board,User,Stats,Test}Mapper.xml` 추가
+  - `BoardMapper`: insert(useGeneratedKeys), 조회, title/content 수정, password 교체, raw 저장, 요약 집계
+  - `UserMapper`: insert(TypeHandler), 업무 조회(resultMap+TypeHandler), 로그인 전용 조회, exists, 동적 검색(`<where>`/`<if>`), 재암호화 배치용 raw
+  - `StatsMapper`: `/summary` 집계 (기존 JdbcTemplate 문자열 제거)
+  - `TestMapper`: `/test/slowpage`의 느린 쿼리
+- 성능 테스트용 일반 쿼리 목록은 `src/main/resources/sql/test-queries.sql`로 이동(Java에 SQL 문자열 없음)
+- 서버 설정에 `mybatis.mapper-locations=classpath:mapper/*.xml` 추가
+- 동작 변경 없음. .56/.57 배포 후 health, 가입/로그인, 사용자 검색, 게시글 생성/비밀번호 확인, `/summary`, `/test/slowpage` 확인
 
 ### v0.0.20 (2026-11-08)
 

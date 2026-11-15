@@ -1,9 +1,9 @@
 package com.xaan.demo.controller;
 
+import com.xaan.demo.domain.mapper.StatsMapper;
 import com.xaan.demo.dto.BoardResponseDto;
 import com.xaan.demo.service.BoardService;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,11 +16,11 @@ import java.util.stream.Collectors;
 @Controller
 public class Top100IndexController {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final StatsMapper statsMapper;
     private final BoardService boardService;
 
-    public Top100IndexController(JdbcTemplate jdbcTemplate, BoardService boardService) {
-        this.jdbcTemplate = jdbcTemplate;
+    public Top100IndexController(StatsMapper statsMapper, BoardService boardService) {
+        this.statsMapper = statsMapper;
         this.boardService = boardService;
     }
 
@@ -40,6 +40,7 @@ public class Top100IndexController {
     @GetMapping("/summary")
     @ResponseBody
     public List<Map<String, Object>> getSummaryData() {
-        return jdbcTemplate.queryForList("SELECT count(1) nrows FROM board a full join board b on a.id = b.id");
+        // SQL은 StatsMapper.xml
+        return List.of(Map.of("nrows", statsMapper.countBoards()));
     }
 }

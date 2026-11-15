@@ -1,17 +1,45 @@
 package com.xaan.demo.service;
 
-import lombok.RequiredArgsConstructor;
+import com.xaan.demo.domain.mapper.TestMapper;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.Resource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 @Service
-@RequiredArgsConstructor
 public class TestService {
 
     private final JdbcTemplate jdbcTemplate;
+    private final TestMapper testMapper;
+    private final List<String> normalQueries;
+
+    public TestService(JdbcTemplate jdbcTemplate,
+                       TestMapper testMapper,
+                       @Value("classpath:sql/test-queries.sql") Resource queriesResource) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.testMapper = testMapper;
+        this.normalQueries = loadQueries(queriesResource);
+    }
+
+    /** 쿼리 목록은 src/main/resources/sql/test-queries.sql 에서 읽는다(Java에 SQL 문자열 없음). */
+    private static List<String> loadQueries(Resource resource) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
+            return reader.lines()
+                    .map(String::trim)
+                    .filter(line -> !line.isEmpty() && !line.startsWith("#"))
+                    .toList();
+        } catch (IOException e) {
+            throw new IllegalStateException("테스트 쿼리 파일을 읽을 수 없습니다: " + resource, e);
+        }
+    }
 
     public TestResult runQueries() {
         List<Long> normalQueryTimes = new ArrayList<>();
@@ -21,7 +49,6 @@ public class TestService {
         runSlowQuery();
         long slowQueryTime = System.currentTimeMillis() - slowStart;
 
-        List<String> normalQueries = getNormalQueries();
         int totalNormalCalls = 250;
         for (int i = 0; i < totalNormalCalls; i++) {
             String query = normalQueries.get(i % normalQueries.size());
@@ -37,51 +64,8 @@ public class TestService {
     }
 
     private void runSlowQuery() {
-        String slowQuery = """
-            select count(1)
-            from (
-                select * from board order by created_date desc fetch next 5000 rows only
-            ) a
-            full join
-            (
-                select * from board order by title desc fetch next 5000 rows only
-            ) b
-            on a.title = b.title
-            """;
-        jdbcTemplate.queryForList(slowQuery);
-    }
-
-    private List<String> getNormalQueries() {
-        List<String> queries = new ArrayList<>();
-
-        queries.add("select * from board order by id desc fetch first 10 rows only");
-        queries.add("select * from board order by password desc fetch first 10 rows only");
-        queries.add("select * from board order by author desc fetch first 10 rows only");
-        queries.add("select * from board order by modified_date desc fetch first 10 rows only");
-        queries.add("select * from board order by created_date desc fetch next 10 rows only");
-
-        queries.add("select id, count(*) as cnt from board group by id order by id desc fetch first 10 rows only");
-        queries.add("select password, count(*) as cnt from board group by password order by password desc fetch first 10 rows only");
-        queries.add("select author, count(*) as cnt from board group by author order by author desc fetch first 10 rows only");
-        queries.add("select modified_date, count(*) as cnt from board group by modified_date order by modified_date desc fetch first 10 rows only");
-        queries.add("select created_date, count(*) as cnt from board group by created_date order by created_date desc fetch next 10 rows only");
-
-        queries.add("select id, count(1) as cnt from board group by id order by id desc fetch first 10 rows only");
-        queries.add("select password, count(1) as cnt from board group by password order by password desc fetch first 10 rows only");
-        queries.add("select author, count(1) as cnt from board group by author order by author desc fetch first 10 rows only");
-        queries.add("select modified_date, count(1) as cnt from board group by modified_date order by modified_date desc fetch first 10 rows only");
-        queries.add("select created_date, count(1) as cnt from board group by created_date order by created_date desc fetch next 10 rows only");
-
-        queries.add("select id, count(id) as cnt from board group by id order by id desc fetch first 10 rows only");
-        queries.add("select password, count(password) as cnt from board group by password order by password desc fetch first 10 rows only");
-        queries.add("select author, count(author) as cnt from board group by author order by author desc fetch first 10 rows only");
-        queries.add("select modified_date, count(modified_date) as cnt from board group by modified_date order by modified_date desc fetch first 10 rows only");
-        queries.add("select created_date, count(created_date) as cnt from board group by created_date order by created_date desc fetch next 10 rows only");
-
-        queries.add("select count(id) from board");
-        queries.add("SELECT count(1) nrows FROM board a full join board b on a.id = b.id");
-
-        return queries;
+        // SQL은 TestMapper.xml
+        testMapper.slowQuery();
     }
 
     public record TestResult(

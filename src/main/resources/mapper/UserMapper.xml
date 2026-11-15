@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  회원 SQL. Java 코드(UserMapper.java)에는 SQL 문자열이 없다.
+
+  - 쓰기(insert)는 id_no/phone에 UserPiiTypeHandler를 적용해 암호화한다.
+  - 업무 조회(findByUserId)는 TypeHandler로 투명하게 복호화한다.
+  - 검색(search)은 ciphertext 그대로 반환하고, 서비스가 행별로 복호화한다
+    (한 행의 ciphertext 문제로 목록 전체가 실패하지 않게 하기 위함).
+-->
+<mapper namespace="com.xaan.demo.domain.mapper.UserMapper">
+
+    <resultMap id="userMap" type="com.xaan.demo.domain.entity.User">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="password" property="password"/>
+        <result column="username" property="username"/>
+        <result column="id_no" property="residentRegistrationNumber"
+                typeHandler="com.xaan.demo.config.mybatis.UserPiiTypeHandler"/>
+        <result column="phone" property="phone"
+                typeHandler="com.xaan.demo.config.mybatis.UserPiiTypeHandler"/>
+        <result column="id_no_blind_idx" property="residentRegistrationNumberBlindIndex"/>
+        <result column="phone_blind_idx" property="phoneBlindIndex"/>
+    </resultMap>
+
+    <!-- 암호문 그대로 매핑(검색/재암호화 배치) -->
+    <resultMap id="userRawMap" type="com.xaan.demo.domain.entity.User">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="password" property="password"/>
+        <result column="username" property="username"/>
+        <result column="id_no" property="residentRegistrationNumber"/>
+        <result column="phone" property="phone"/>
+        <result column="id_no_blind_idx" property="residentRegistrationNumberBlindIndex"/>
+        <result column="phone_blind_idx" property="phoneBlindIndex"/>
+    </resultMap>
+
+    <resultMap id="userAuthMap" type="com.xaan.demo.domain.entity.User">
+        <id column="id" property="id"/>
+        <result column="user_id" property="userId"/>
+        <result column="password" property="password"/>
+        <result column="username" property="username"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.xaan.demo.domain.entity.User"
+            useGeneratedKeys="true" keyProperty="id" keyColumn="id">
+        insert into users (user_id, password, username, id_no, phone, id_no_blind_idx, phone_blind_idx)
+        values (#{userId}, #{password}, #{username},
+                #{residentRegistrationNumber,typeHandler=com.xaan.demo.config.mybatis.UserPiiTypeHandler},
+                #{phone,typeHandler=com.xaan.demo.config.mybatis.UserPiiTypeHandler},
+                #{residentRegistrationNumberBlindIndex}, #{phoneBlindIndex})
+    </insert>
+
+    <select id="findByUserId" resultMap="userMap">
+        select id, user_id, password, username, id_no, phone, id_no_blind_idx, phone_blind_idx
+          from users
+         where user_id = #{userId}
+    </select>
+
+    <!-- 로그인 전용: PII를 복호화하지 않는다 -->
+    <select id="findAuthByUserId" resultMap="userAuthMap">
+        select id, user_id, password, username from users where user_id = #{userId}
+    </select>
+
+    <select id="existsByUserId" resultType="boolean">
+        select exists(select 1 from users where user_id = #{userId})
+    </select>
+
+    <!-- 이름 부분일치 + 전화/RRN blind index 정확일치. null/빈 값 조건은 무시한다. -->
+    <select id="search" resultMap="userRawMap">
+        select id, user_id, password, username, id_no, phone, id_no_blind_idx, phone_blind_idx
+          from users
+        <where>
+            <if test="name != null and name != ''">
+                and username like concat('%', #{name}, '%')
+            </if>
+            <if test="phoneBlindIndex != null and phoneBlindIndex != ''">
+                and phone_blind_idx = #{phoneBlindIndex}
+            </if>
+            <if test="rrnBlindIndex != null and rrnBlindIndex != ''">
+                and id_no_blind_idx = #{rrnBlindIndex}
+            </if>
+        </where>
+        order by id desc
+    </select>
+
+    <!-- 재암호화 배치 전용: id_no를 ciphertext 그대로 읽는다 -->
+    <select id="findAllRaw" resultMap="userRawMap">
+        select id, user_id, password, username, id_no from users order by id
+    </select>
+
+    <!-- 재암호화 배치 전용: 이미 암호화된 값을 그대로 저장한다 -->
+    <update id="updateResidentRegistrationNumberRaw">
+        update users set id_no = #{residentRegistrationNumber} where id = #{id}
+    </update>
+</mapper>
