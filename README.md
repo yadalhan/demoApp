@@ -69,6 +69,7 @@ migrations/
 └── 001_add_user_phone_and_blind_index.sql  # users.phone/phone_blind_idx/id_no_blind_idx 컬럼 추가
 
 bootstrap_blind_index_keys.py     # blind index HMAC 키 생성 helper (bootstrap_kek_dek.py와 동일한 패턴)
+import_sample_data.py             # 샘플 JSON(board/users) 일괄 import - 평문 PII를 봉투 암호화 + blind index 계산해 적재
 ```
 
 ## Prerequisites
@@ -185,6 +186,29 @@ vault kv get -mount=ebiz_service ebiz_db/blind-index/user-rrn
 
 > The legacy single-key secret `ebiz_db/data-enc-key` (`fernet-key`) is **no longer read** by the
 > application. See [VAULT_AND_ENCRYPTION.md](VAULT_AND_ENCRYPTION.md) for the current architecture.
+
+### Importing sample data (`import_sample_data.py`)
+
+JSON 백업(`board.json`, `users.json`)을 **암호화 대상 컬럼만 암호화해서** DB에 적재하는 배치 스크립트다.
+JSON의 `board.password`, `users.id_no`/`phone`은 평문이므로, 스크립트가 OpenBao에서 DEK·blind-index 키를
+읽어 앱과 동일한 형식으로 변환한다(`users.password`가 이미 BCrypt면 그대로 사용).
+
+```bash
+# 미리보기 (DB에 쓰지 않음)
+./import_sample_data.py --board board.json --users users.json --dry-run
+
+# 적재 (테이블이 비어 있을 때만) / 기존 데이터 유지하며 추가 / 초기화 후 적재
+./import_sample_data.py --board board.json --users users.json
+./import_sample_data.py --board board.json --users users.json --append
+./import_sample_data.py --board board.json --users users.json --truncate
+```
+
+- 키·접속 정보는 `VAULT_TOKEN`/`BAO_TOKEN`, `PGPASSWORD` 또는 `~/.myapp/token`, `~/.myapp/dbpw`에서 읽는다
+  (`--vault-token-file`, `--db-password-file`로 경로 지정 가능)
+- 봉투 암호화 포맷은 `Base64URL(domainCode|keyVersion|IV(12)|AES-256-GCM ct+tag)`, blind index는
+  HMAC-SHA256 Base64URL(43자) — 앱(`EnvelopeCryptoService`/`BlindIndexService`)과 바이트 단위로 동일
+- `psql \copy`(CSV)로 **한 트랜잭션**에 적재하고, 완료 후 identity 시퀀스를 `max(id)`로 맞춘다
+- 기존 행과 `id`/`user_id`가 겹치면 `--append` 모드에서 해당 샘플만 건너뛴다
 
 ## Building the Project
 
