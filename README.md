@@ -70,7 +70,7 @@ migrations/
 
 bootstrap_blind_index_keys.py     # blind index HMAC 키 생성 helper (bootstrap_kek_dek.py와 동일한 패턴)
 import_sample_data.py             # 샘플 JSON(board/users) 일괄 import - 평문 PII를 봉투 암호화 + blind index 계산해 적재
-openbao_keys.sh                   # OpenBao 키 세트를 bao CLI로 생성/이전/검증 (python·jq 불필요)
+openbao_keys.sh                   # OpenBao 키 세트 생성/이전/검증 (POSIX sh + bao CLI, python·jq 불필요)
 ```
 
 ## Prerequisites
@@ -658,24 +658,25 @@ For issues and feature requests, please use the GitHub Issues page.
 ### OpenBao 키 구성/이전 (`openbao_keys.sh`)
 
 demoApp이 쓰는 키 세트(Transit KEK + wrapped DEK + blind index 키 + 정책/토큰)를 **`bao` CLI만으로** 만들거나,
-기존 서버에서 새 서버로 옮기는 스크립트다(python/jq 불필요). 기본은 dry-run이며 `--apply`로 반영한다.
+기존 서버에서 새 서버로 옮기는 **POSIX sh** 스크립트다(python/jq 불필요, `dash`/`busybox ash`에서도 동작).
+기본은 dry-run이며 `--apply`로 반영한다.
 
-```bash
+```sh
 # 0) 현재 구성 조회 (읽기 전용)
-BAO_ADDR=http://<HOST>:28200 BAO_TOKEN=<token> ./openbao_keys.sh show
+BAO_ADDR=http://<HOST>:28200 BAO_TOKEN=<token> sh ./openbao_keys.sh show
 
 # 1) 새 서버에 신규 키 세트 생성 (빈 데이터/신규 배포)
-./openbao_keys.sh create --addr http://<NEW_HOST>:28200 --token <root> \
+sh ./openbao_keys.sh create --addr http://<NEW_HOST>:28200 --token <root> \
     --policy demoapp-read --token-out ./demoapp-app-token --apply
 
 # 2) 기존 데이터 유지한 채 새 서버로 이전
 #    - 옛 서버에서 DEK 평문을 꺼내 새 KEK로 rewrap (버전 번호·current-version 유지)
 #    - blind index 키는 값을 그대로 복사 (새로 만들면 기존 인덱스 컬럼과 불일치)
 OLD_BAO_ADDR=http://<OLD_HOST>:28200 OLD_BAO_TOKEN=<old-root> \
-./openbao_keys.sh migrate --addr http://<NEW_HOST>:28200 --token <new-root> --apply
+sh ./openbao_keys.sh migrate --addr http://<NEW_HOST>:28200 --token <new-root> --apply
 
 # 3) 모든 DEK 버전 round-trip 검증
-./openbao_keys.sh verify --addr http://<NEW_HOST>:28200 --token <root>
+sh ./openbao_keys.sh verify --addr http://<NEW_HOST>:28200 --token <root>
 ```
 
 - 경로 기본값: `--mount ebiz_service --base ebiz_db --transit-mount transit --transit-key kek`
