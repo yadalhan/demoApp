@@ -116,7 +116,7 @@ spring.cloud.vault.fail-fast=false
 ### KMS (OpenBao) Integration — Transit KEK + wrapped DEK (2026-11-13~)
 
 KEK는 **OpenBao Transit 엔진**(`transit/keys/kek`)에 있고 앱으로 내려오지 않는다. 앱은 KV의 wrapped DEK를
-`transit/decrypt`로 풀어 DEK만 메모리에 캐시한다(vault-crypto 2.1.0의 `TransitKeyWrapper`).
+`transit/decrypt`로 풀어 DEK만 메모리에 캐시한다(vault-crypto 2.2.0의 `TransitKeyWrapper`).
 KEK를 KV에 두던 이전 방식은 레거시이며, 이관 스크립트(`migrate_dek_to_transit.py`)로 데이터 재암호화 없이 전환했다.
 
 - **KEK**: `transit/keys/kek` (aes256-gcm96, exportable=false)
@@ -145,7 +145,7 @@ BAO_TOKEN=<admin> python3 migrate_dek_to_transit.py --backup ./dek_transit_backu
 - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for the full design, `bootstrap_kek_dek.py` for KEK/DEK secrets, and `bootstrap_blind_index_keys.py` for blind index secrets — both scripts only print `vault kv put` commands, they don't touch the KMS themselves
 
 ### How It Works
-1. **vault-crypto package** (`com.xaan:vault-crypto:2.1.0`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
+1. **vault-crypto package** (`com.xaan:vault-crypto:2.2.0`) provides KEK-DEK envelope encryption, BCrypt password hashing (`PasswordHasher`), blind index search (`BlindIndexService`), and a MyBatis `TypeHandler` base class (`EnvelopeCryptoTypeHandler`) - all password/PII-related crypto lives in the library, not in demoApp
 2. `CryptoConfig` builds one `EnvelopeCryptoService` per domain (`board`, `user-pii`) and one `BlindIndexService` per searchable field (`user-phone`, `user-rrn`); each loads its key from OpenBao once at startup and caches it in memory
 3. Encryption is applied via MyBatis `TypeHandler`s registered as Spring beans (`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`) and referenced explicitly per column in `BoardMapper`/`UserMapper`'s SQL - `BoardService`/`UserService` pass and receive plain Java strings, never touching `EnvelopeCryptoService` directly. `board.password` is only wired write-side (encrypt on insert/update) because legacy rows predated the envelope format and would break ordinary list/view reads if decrypted on every `SELECT` (0 such rows remain as of 2026-11-08, but the write-only wiring is retained); `users.id_no`/`phone` are wired both ways since that table has no legacy data
 4. `PasswordService` keeps only what's left for the service layer to call explicitly: BCrypt hash/validate, board-password `validate()` (needs the plaintext input compared against stored ciphertext, not just a blind write/read), and blind index computation for search
@@ -159,7 +159,7 @@ Encryption functionality is extracted into a separate package:
 - **Repository**: `vault-crypto/` (별도 프로젝트)
 - **Build**: `gradle.bat clean build publishToMavenLocal` (Windows) 또는 `./gradlew clean build publishToMavenLocal` (Linux)
 - **Usage**: See `vault-crypto/README.md` for details
-- **Build order**: demoApp depends on the published `com.xaan:vault-crypto:2.1.0`, so publish the
+- **Build order**: demoApp depends on the published `com.xaan:vault-crypto:2.2.0`, so publish the
   library first (`publishToMavenLocal`); otherwise dependency resolution fails when `~/.m2` only has
   an older version
 
@@ -305,7 +305,7 @@ CREATE TABLE ebiz.board (
    - **게시글 비밀번호 / 주민등록번호 / 전화번호**: AES-256 GCM KEK-DEK 봉투 암호화 (`vault-crypto`의 `EnvelopeCryptoService`), `board`/`user-pii` 도메인별로 독립된 DEK 사용
    - Implementation: 암/복호화는 MyBatis `TypeHandler`(`config/mybatis/BoardPasswordTypeHandler`, `UserPiiTypeHandler`)가 Mapper 컬럼 단위로 투명하게 처리 - `BoardService`/`UserService`는 평문만 다루고 `vault-crypto`를 직접 호출하지 않음. `PasswordService.java`는 BCrypt 해시/검증, board 비밀번호 `validate()`, blind index 계산만 남아 있음
    - DEK는 Vault의 KEK로 wrap되어 저장되고, 앱 기동 시 1회 unwrap되어 메모리에 캐시됨 (요청 시점엔 Vault 호출 없음). BCrypt는 외부 키가 필요 없어 Vault와 무관
-   - Package: `com.xaan:vault-crypto:2.1.0`
+   - Package: `com.xaan:vault-crypto:2.2.0`
    - See [KEK_DEK_ENCRYPTION_PLAN.md](KEK_DEK_ENCRYPTION_PLAN.md) for details
    - ✅ **P0 완료** (2026-08-19): 운영 Vault에 KEK/DEK 시크릿 생성 완료, 앱이 정상적으로 키를 로드함을 확인
    - 암호화 컬럼을 다루는 조회/조회 코드를 새로 짤 때는 [ENCRYPTED_COLUMN_QUERY_GUIDE.md](ENCRYPTED_COLUMN_QUERY_GUIDE.md) 참고 - 단건/목록/검색/캐싱 상황별 패턴과, 실제로 겪었던 실수(이중 암호화, 캐시에 평문 노출, self-invocation 등) 정리
@@ -376,6 +376,16 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 ```
 
 ## Release History
+
+### 0.0.23 (2026-11-19)
+
+**vault-crypto 2.2.0 적용(OpenBao 네임스페이스 지원 릴리스).** 애플리케이션 코드/설정 변경은 없고 의존성만 올렸다.
+네임스페이스를 쓰는 환경에서는 `spring.cloud.vault.namespace=<NS>` 한 줄로 KV/Transit 호출이 그 네임스페이스로 향한다.
+
+- `com.xaan:vault-crypto:2.1.0` → `2.2.0` (기존 API/암호문 포맷 호환)
+- `build.gradle`의 `jar/bootJar archiveVersion = '0.0.22'` 고정값 제거(버전 변경 시 산출물 이름이 따라가도록)
+- `deploy.bat`의 `JAR_VERSION`이 0.0.20으로 남아 있던 것 수정
+- `.56`/`.57` 두 인스턴스에 배포: JAR `xaandemo-0.0.23.jar`(vault-crypto 2.2.0 번들), health UP, `/last100` 200
 
 ### 0.0.22 (2026-11-15)
 
