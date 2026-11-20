@@ -1,41 +1,44 @@
 #!/bin/sh
 # =====================================================================
-# demoApp OpenBao 키 구성/이전 스크립트 (POSIX sh + bao CLI, python/jq 불필요)
+# demoApp OpenBao key setup/migration tool (POSIX sh + bao CLI; no python/jq)
 #
-#   demoApp이 쓰는 키 세트를 새 OpenBao 서버에 만든다.
-#     transit/keys/<KEK>                          : KEK (aes256-gcm96, 비반출)
-#     <MOUNT>/data/<BASE>/dek/{board,user-pii}    : wrapped DEK (dek-v{n}, current-version)
-#     <MOUNT>/data/<BASE>/blind-index/{user-phone,user-rrn} : HMAC 키 (Base64URL 32B)
-#     policy/token (선택)
+#   Creates the key set demoApp uses on a new OpenBao server.
+#     transit/keys/<KEK>                                       : KEK (aes256-gcm96, non-exportable)
+#     <MOUNT>/data/<BASE>/dek/{board,user-pii}                 : wrapped DEKs (dek-v{n},
+#                                                                Base64URL(UTF-8("vault:vN:...")))
+#     <MOUNT>/data/<BASE>/blind-index/{user-phone,user-rrn}    : HMAC keys (Base64URL 32B)
+#     policy/token (optional)
 #
-#   서브커맨드
-#     show     현재 키 구성 조회 (읽기 전용)
-#     create   새 키 생성 (빈 데이터/신규 배포용)
-#     migrate  기존 서버의 DEK/BI 키를 새 서버로 이전 (데이터 유지)
-#              - 옛 서버에서 DEK 평문을 꺼내 새 KEK로 다시 wrap (버전 번호 유지)
-#              - blind index 키는 값을 그대로 복사 (새로 만들면 기존 인덱스와 불일치)
-#     verify   모든 DEK 버전의 wrap/unwrap round-trip 검증
+#   Subcommands
+#     show     print the current key layout (read-only)
+#     create   create a fresh key set (empty data / new deployment)
+#     migrate  copy DEKs/BI keys from an existing server (data preserved)
+#              - unwrap each DEK on the old server, wrap it with the new KEK,
+#                and keep the same version numbers and current-version
+#              - blind index keys are copied as-is (creating new ones would break
+#                the existing blind index columns)
+#     verify   round-trip check of every DEK version + BI key length
 #
-#   공통 옵션
-#     --addr URL        새 OpenBao 주소 (기본 $BAO_ADDR)
-#     --token TOKEN     새 OpenBao 토큰 (기본 $BAO_TOKEN)
-#     --mount NAME      kv-v2 마운트 (기본 ebiz_service)
-#     --base PATH       기본 경로 (기본 ebiz_db)
-#     --transit-mount   (기본 transit)
-#     --transit-key     KEK 이름 (기본 kek)
-#     --domains         (기본 board,user-pii)
-#     --blind-indexes   (기본 user-phone,user-rrn)
-#     --apply           실제 반영 (없으면 계획만 출력하는 dry-run)
-#     --force           이미 키가 있어도 덮어쓴다 (데이터 유실 위험)
-#     --old-addr/--old-token   migrate 원본 서버 (기본 $OLD_BAO_ADDR/$OLD_BAO_TOKEN)
-#     --old-mount/--old-base/--old-transit-key   원본 경로가 새 서버와 다를 때 지정
-#                                                (기본값은 각각 --mount/--base/--transit-key)
-#     --policy NAME     create 시 정책 이름 (기본 demoapp-read, 빈 값이면 생략)
-#     --token-name      create 시 토큰 display_name (기본 token-demoapp)
-#     --token-ttl       (기본 768h)
-#     --token-out PATH  create 시 앱 토큰을 저장할 파일 (기본 ./demoapp-app-token, 600)
+#   Common options
+#     --addr URL        new OpenBao address (default $BAO_ADDR)
+#     --token TOKEN     new OpenBao token (default $BAO_TOKEN)
+#     --mount NAME      kv-v2 mount (default ebiz_service)
+#     --base PATH       base path (default ebiz_db)
+#     --transit-mount   (default transit)
+#     --transit-key     KEK name (default kek)
+#     --domains         (default board,user-pii)
+#     --blind-indexes   (default user-phone,user-rrn)
+#     --apply           actually write (default is dry-run)
+#     --force           overwrite existing keys (data loss risk)
+#     --old-addr/--old-token   migrate source server (default $OLD_BAO_ADDR/$OLD_BAO_TOKEN)
+#     --old-mount/--old-base/--old-transit-key   when the source paths differ from the
+#                                                target (defaults: same as --mount/--base/--transit-key)
+#     --policy NAME     policy name for create (default demoapp-read; empty to skip)
+#     --token-name      token display name (default token-demoapp)
+#     --token-ttl       (default 768h)
+#     --token-out PATH  where to store the app token (default ./demoapp-app-token, mode 600)
 #
-#   예)
+#   Examples
 #     sh ./openbao_keys.sh show
 #     sh ./openbao_keys.sh create  --addr http://10.0.0.5:28200 --token <root> --apply
 #     OLD_BAO_ADDR=http://192.168.2.57:28200 OLD_BAO_TOKEN=<old-root> \
@@ -64,11 +67,11 @@ TOKEN_NAME="token-demoapp"
 TOKEN_TTL="768h"
 TOKEN_OUT="./demoapp-app-token"
 
-die() { echo "FAIL: $*" >&2; exit 1; }
+die() { echo "ABORT: $*" >&2; exit 1; }
 info() { echo "-- $*"; }
 ok() { echo "OK  : $*"; }
 
-usage() { sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,50p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 CMD="${1:-}"
 [ -n "$CMD" ] || usage
@@ -97,7 +100,7 @@ while [ $# -gt 0 ]; do
     --apply) APPLY=1; shift ;;
     --force) FORCE=1; shift ;;
     -h|--help) usage ;;
-    *) die "알 수 없는 옵션: $1" ;;
+    *) die "unknown option: $1" ;;
   esac
 done
 
@@ -107,13 +110,13 @@ done
 [ -n "$OLD_TRANSIT_KEY" ] || OLD_TRANSIT_KEY="$TRANSIT_KEY"
 
 # ---------------------------------------------------------------- helpers
-# 32바이트 난수 (raw bytes)
+# 32 random bytes (raw)
 random32() { dd if=/dev/urandom bs=32 count=1 2>/dev/null; }
-# stdin 바이트 -> 표준 base64(한 줄)
+# stdin bytes -> standard base64 (single line)
 b64std() { base64 | tr -d '\n'; }
-# stdin 바이트 -> Base64URL(패딩 없음)
+# stdin bytes -> Base64URL (no padding)
 b64u() { base64 | tr -d '\n' | tr '+/' '-_' | tr -d '='; }
-# Base64URL -> 원본 바이트
+# Base64URL -> raw bytes
 b64u_dec() {
   _u=$(tr '_-' '/+')
   _u=$(printf '%s' "$_u" | tr -d '\n')
@@ -135,17 +138,17 @@ kv_exists() { new_bao kv get -mount="$MOUNT" "$1" >/dev/null 2>&1; }
 kek_exists() { new_bao read -field=latest_version "$(kek_path)" >/dev/null 2>&1; }
 
 require_new_conn() {
-  [ -n "$ADDR" ] || die "--addr 또는 BAO_ADDR 가 필요합니다"
-  [ -n "$TOKEN" ] || die "--token 또는 BAO_TOKEN 이 필요합니다"
-  new_bao token lookup >/dev/null 2>&1 || die "새 OpenBao 토큰/주소 확인 실패: $ADDR"
-  info "새 OpenBao: $ADDR (mount=$MOUNT, base=$BASE, transit=$(kek_path))"
+  [ -n "$ADDR" ] || die "--addr or BAO_ADDR is required"
+  [ -n "$TOKEN" ] || die "--token or BAO_TOKEN is required"
+  new_bao token lookup >/dev/null 2>&1 || die "new OpenBao token/address check failed: $ADDR"
+  info "new OpenBao: $ADDR (mount=$MOUNT, base=$BASE, transit=$(kek_path))"
 }
 
 require_old_conn() {
-  [ -n "$OLD_ADDR" ] || die "migrate 에는 --old-addr 또는 OLD_BAO_ADDR 이 필요합니다"
-  [ -n "$OLD_TOKEN" ] || die "migrate 에는 --old-token 또는 OLD_BAO_TOKEN 이 필요합니다"
-  old_bao token lookup >/dev/null 2>&1 || die "원본 OpenBao 토큰/주소 확인 실패: $OLD_ADDR"
-  info "원본 OpenBao: $OLD_ADDR (mount=$OLD_MOUNT, base=$OLD_BASE, transit=$OLD_TRANSIT_MOUNT/keys/$OLD_TRANSIT_KEY)"
+  [ -n "$OLD_ADDR" ] || die "migrate requires --old-addr or OLD_BAO_ADDR"
+  [ -n "$OLD_TOKEN" ] || die "migrate requires --old-token or OLD_BAO_TOKEN"
+  old_bao token lookup >/dev/null 2>&1 || die "source OpenBao token/address check failed: $OLD_ADDR"
+  info "source OpenBao: $OLD_ADDR (mount=$OLD_MOUNT, base=$OLD_BASE, transit=$OLD_TRANSIT_MOUNT/keys/$OLD_TRANSIT_KEY)"
 }
 
 show_remote() {
@@ -157,7 +160,7 @@ show_remote() {
     _md=$(BAO_ADDR="$_addr" BAO_TOKEN="$_tok" bao read -field=min_decryption_version "$TRANSIT_MOUNT/keys/$TRANSIT_KEY")
     echo "  KEK $(kek_path): latest_version=$_lk min_decryption=$_md"
   else
-    echo "  KEK $(kek_path): 없음"
+    echo "  KEK $(kek_path): missing"
   fi
   for _d in $(echo "$DOMAINS" | tr ',' ' '); do
     if BAO_ADDR="$_addr" BAO_TOKEN="$_tok" bao kv get -mount="$MOUNT" "$(dek_path "$_d")" >/dev/null 2>&1; then
@@ -171,7 +174,7 @@ show_remote() {
       done
       echo
     else
-      echo "  dek/$_d: 없음"
+      echo "  dek/$_d: missing"
     fi
   done
   for _d in $(echo "$BLIND_INDEXES" | tr ',' ' '); do
@@ -179,66 +182,66 @@ show_remote() {
       _len=$(BAO_ADDR="$_addr" BAO_TOKEN="$_tok" bao kv get -field=key -mount="$MOUNT" "$(bi_path "$_d")" | b64u_len)
       echo "  blind-index/$_d: key ${_len}B"
     else
-      echo "  blind-index/$_d: 없음"
+      echo "  blind-index/$_d: missing"
     fi
   done
 }
 
 mkdir_kv_mount_if_absent() {
   if new_bao secrets list | awk '{print $1}' | grep -qx "$MOUNT/"; then
-    info "kv-v2 마운트 있음: $MOUNT/"
+    info "kv-v2 mount present: $MOUNT/"
   else
     [ "$APPLY" = 1 ] || { info "[dry-run] bao secrets enable -path=$MOUNT kv-v2"; return 0; }
     new_bao secrets enable -path="$MOUNT" kv-v2 >/dev/null
-    ok "kv-v2 마운트 생성: $MOUNT/"
+    ok "kv-v2 mount created: $MOUNT/"
   fi
 }
 
 mkdir_transit_mount_if_absent() {
   if new_bao secrets list | awk '{print $1}' | grep -qx "$TRANSIT_MOUNT/"; then
-    info "transit 마운트 있음: $TRANSIT_MOUNT/"
+    info "transit mount present: $TRANSIT_MOUNT/"
   else
     [ "$APPLY" = 1 ] || { info "[dry-run] bao secrets enable -path=$TRANSIT_MOUNT transit"; return 0; }
     new_bao secrets enable -path="$TRANSIT_MOUNT" transit >/dev/null
-    ok "transit 마운트 생성: $TRANSIT_MOUNT/"
+    ok "transit mount created: $TRANSIT_MOUNT/"
   fi
 }
 
 ensure_kek() {
   if kek_exists; then
-    info "KEK 있음: $(kek_path) (latest_version=$(new_bao read -field=latest_version "$(kek_path)"))"
+    info "KEK present: $(kek_path) (latest_version=$(new_bao read -field=latest_version "$(kek_path)"))"
     return 0
   fi
   [ "$APPLY" = 1 ] || { info "[dry-run] bao write $(kek_path) type=aes256-gcm96 exportable=false allow_plaintext_backup=false"; return 0; }
   new_bao write "$(kek_path)" type=aes256-gcm96 exportable=false allow_plaintext_backup=false >/dev/null
-  ok "KEK 생성: $(kek_path) (latest_version=$(new_bao read -field=latest_version "$(kek_path)"))"
+  ok "KEK created: $(kek_path) (latest_version=$(new_bao read -field=latest_version "$(kek_path)"))"
 }
 
-# 평문 DEK(base64)를 새 KEK로 wrap해서 KV 필드 형식(Base64URL)으로 반환
+# wrap a plaintext DEK (standard base64) with the new KEK and return the KV field form
 wrap_field() {
   _ct=$(new_bao write -field=ciphertext "transit/encrypt/$TRANSIT_KEY" plaintext="$1")
-  [ -n "$_ct" ] || die "transit/encrypt 응답이 비었습니다"
+  [ -n "$_ct" ] || die "transit/encrypt returned no ciphertext"
   printf '%s' "$_ct" | b64u
 }
 
-# KV 필드 값 -> ciphertext 문자열
+# KV field value -> ciphertext string
 field_to_ciphertext() { printf '%s' "$1" | b64u_dec; }
 
 # ---------------------------------------------------------------- commands
 cmd_show() {
-  [ -n "$ADDR" ] || die "--addr 또는 BAO_ADDR 가 필요합니다"
-  [ -n "$TOKEN" ] || die "--token 또는 BAO_TOKEN 이 필요합니다"
-  show_remote "새 OpenBao" "$ADDR" "$TOKEN"
+  [ -n "$ADDR" ] || die "--addr or BAO_ADDR is required"
+  [ -n "$TOKEN" ] || die "--token or BAO_TOKEN is required"
+  show_remote "new OpenBao" "$ADDR" "$TOKEN"
 }
 
 cmd_create() {
   require_new_conn
-  [ "$APPLY" = 1 ] || echo "*** dry-run: 실제 반영은 --apply ***"
+  [ "$APPLY" = 1 ] || echo "*** dry-run: use --apply to write ***"
 
   if [ "$FORCE" != 1 ]; then
     for _d in $(echo "$DOMAINS" | tr ',' ' '); do
       if kv_exists "$(dek_path "$_d")"; then
-        die "이미 dek 키가 있습니다: $(dek_path "$_d") (덮어쓰려면 --force)"
+        die "DEK keys already exist: $(dek_path "$_d") (use --force to overwrite)"
       fi
     done
   fi
@@ -249,21 +252,21 @@ cmd_create() {
 
   for _d in $(echo "$DOMAINS" | tr ',' ' '); do
     if [ "$APPLY" != 1 ]; then
-      info "[dry-run] dek/$_d: 새 DEK 32B 생성 → transit/encrypt → Base64URL → dek-v1 + current-version=1"
+      info "[dry-run] dek/$_d: generate 32B DEK -> transit/encrypt -> Base64URL -> dek-v1 + current-version=1"
       continue
     fi
     _field=$(wrap_field "$(random32 | b64std)")
     new_bao kv put -mount="$MOUNT" "$(dek_path "$_d")" "dek-v1=$_field" current-version=1 >/dev/null
-    ok "DEK 생성: $(dek_path "$_d") (dek-v1, current-version=1)"
+    ok "DEK created: $(dek_path "$_d") (dek-v1, current-version=1)"
   done
 
   for _d in $(echo "$BLIND_INDEXES" | tr ',' ' '); do
     if [ "$APPLY" != 1 ]; then
-      info "[dry-run] blind-index/$_d: 랜덤 32B → Base64URL 43자 저장"
+      info "[dry-run] blind-index/$_d: random 32B -> Base64URL (43 chars)"
       continue
     fi
     new_bao kv put -mount="$MOUNT" "$(bi_path "$_d")" key="$(random32 | b64u)" >/dev/null
-    ok "blind-index 키 생성: $(bi_path "$_d")"
+    ok "blind-index key created: $(bi_path "$_d")"
   done
 
   if [ -n "$POLICY" ]; then
@@ -277,10 +280,10 @@ path "$MOUNT/data/$BASE/blind-index/*" { capabilities = ["read"] }
 path "$TRANSIT_MOUNT/decrypt/$TRANSIT_KEY" { capabilities = ["update"] }
 path "auth/token/lookup-self"          { capabilities = ["read"] }
 HCL
-    ok "정책 등록: $POLICY"
+    ok "policy written: $POLICY"
     ( umask 077; new_bao token create -policy="$POLICY" -display-name="$TOKEN_NAME" \
         -ttl="$TOKEN_TTL" -renewable=true -field=token > "$TOKEN_OUT" )
-    ok "앱 토큰 발급 → $TOKEN_OUT (권한 600, 값은 화면에 출력하지 않음)"
+    ok "app token issued -> $TOKEN_OUT (mode 600; value is not printed)"
   fi
 
   cmd_verify
@@ -289,12 +292,12 @@ HCL
 cmd_migrate() {
   require_new_conn
   require_old_conn
-  [ "$APPLY" = 1 ] || echo "*** dry-run: 실제 반영은 --apply ***"
+  [ "$APPLY" = 1 ] || echo "*** dry-run: use --apply to write ***"
 
   if [ "$FORCE" != 1 ]; then
     for _d in $(echo "$DOMAINS" | tr ',' ' '); do
       if kv_exists "$(dek_path "$_d")"; then
-        die "새 서버에 이미 dek 키가 있습니다: $(dek_path "$_d") (덮어쓰려면 --force)"
+        die "target already has DEK keys: $(dek_path "$_d") (use --force to overwrite)"
       fi
     done
   fi
@@ -303,53 +306,53 @@ cmd_migrate() {
   mkdir_transit_mount_if_absent
   ensure_kek
 
-  # 1) DEK: 옛 서버 ciphertext → 복호화(평문) → 새 KEK로 wrap → 같은 버전으로 저장
+  # 1) DEK: old ciphertext -> unwrap (plaintext) -> wrap with new KEK -> store under the same version
   for _d in $(echo "$DOMAINS" | tr ',' ' '); do
     if ! _cur=$(old_bao kv get -field=current-version -mount="$OLD_MOUNT" "$OLD_BASE/dek/$_d"); then
-      die "원본에 $OLD_BASE/dek/$_d 가 없습니다"
+      die "source has no $OLD_BASE/dek/$_d"
     fi
     set --
     _v=1
     while [ "$_v" -le "$_cur" ]; do
       _field=$(old_bao kv get -field="dek-v$_v" -mount="$OLD_MOUNT" "$OLD_BASE/dek/$_d")
-      [ -n "$_field" ] || die "원본 dek-v$_v 값이 비었습니다 ($_d)"
+      [ -n "$_field" ] || die "source dek-v$_v is empty ($_d)"
       _ct=$(field_to_ciphertext "$_field")
       _plain=$(old_bao write -field=plaintext "$OLD_TRANSIT_MOUNT/decrypt/$OLD_TRANSIT_KEY" ciphertext="$_ct")
-      [ -n "$_plain" ] || die "원본 dek-v$_v 복호화 실패 ($_d)"
+      [ -n "$_plain" ] || die "source dek-v$_v decryption failed ($_d)"
       _oldlen=$(printf '%s' "$_plain" | b64len)
-      [ "$_oldlen" = 32 ] || die "원본 DEK 길이가 32B가 아닙니다: $_d v$_v ($_oldlen)"
+      [ "$_oldlen" = 32 ] || die "source DEK is not 32 bytes: $_d v$_v ($_oldlen)"
       _newfield=$(wrap_field "$_plain")
       _newct=$(field_to_ciphertext "$_newfield")
       _newplain=$(new_bao write -field=plaintext "$TRANSIT_MOUNT/decrypt/$TRANSIT_KEY" ciphertext="$_newct")
       _newlen=$(printf '%s' "$_newplain" | b64len)
-      [ "$_newlen" = 32 ] || die "새 KEK wrap 검증 실패: $_d v$_v"
+      [ "$_newlen" = 32 ] || die "new KEK wrap verification failed: $_d v$_v"
       set -- "$@" "dek-v$_v=$_newfield"
-      info "dek/$_d: dek-v$_v 이전 (32B round-trip OK)"
+      info "dek/$_d: migrated dek-v$_v (32B round-trip OK)"
       _v=$((_v + 1))
     done
     if [ "$APPLY" = 1 ]; then
       new_bao kv put -mount="$MOUNT" "$(dek_path "$_d")" "$@" "current-version=$_cur" >/dev/null
-      ok "dek/$_d 저장 완료 (dek-v1..dek-v$_cur, current-version=$_cur)"
+      ok "dek/$_d stored (dek-v1..dek-v$_cur, current-version=$_cur)"
     else
       info "[dry-run] kv put $(dek_path "$_d") dek-v1..dek-v$_cur current-version=$_cur"
     fi
   done
 
-  # 2) blind index: 새로 만들지 않고 값만 복사 (기존 인덱스 컬럼과 일치해야 함)
+  # 2) blind index: copy values as-is (they must match the existing index columns)
   for _i in $(echo "$BLIND_INDEXES" | tr ',' ' '); do
     if new_bao kv get -mount="$MOUNT" "$(bi_path "$_i")" >/dev/null 2>&1 && [ "$FORCE" != 1 ]; then
-      info "blind-index/$_i: 이미 있음 (건너뜀, 덮어쓰려면 --force)"
+      info "blind-index/$_i: already present (skipped; use --force to overwrite)"
       continue
     fi
     if ! _k=$(old_bao kv get -field=key -mount="$OLD_MOUNT" "$OLD_BASE/blind-index/$_i"); then
-      die "원본에 $OLD_BASE/blind-index/$_i 가 없습니다"
+      die "source has no $OLD_BASE/blind-index/$_i"
     fi
-    [ "${#_k}" = 43 ] || die "원본 blind-index/$_i 키 길이가 43자가 아닙니다 (${#_k})"
+    [ "${#_k}" = 43 ] || die "source blind-index/$_i key is not 43 chars (${#_k})"
     if [ "$APPLY" = 1 ]; then
       new_bao kv put -mount="$MOUNT" "$(bi_path "$_i")" key="$_k" >/dev/null
-      ok "blind-index/$_i 복사 완료 (값 동일)"
+      ok "blind-index/$_i copied (identical value)"
     else
-      info "[dry-run] kv put $(bi_path "$_i") key=<원본과 동일>"
+      info "[dry-run] kv put $(bi_path "$_i") key=<same as source>"
     fi
   done
 
@@ -362,7 +365,7 @@ cmd_verify() {
   _failcnt=0
   for _d in $(echo "$DOMAINS" | tr ',' ' '); do
     if ! _cur=$(new_bao kv get -field=current-version -mount="$MOUNT" "$(dek_path "$_d")"); then
-      die "$(dek_path "$_d") 를 읽을 수 없습니다"
+      die "cannot read $(dek_path "$_d")"
     fi
     _v=1
     while [ "$_v" -le "$_cur" ]; do
@@ -376,12 +379,12 @@ cmd_verify() {
             ok "dek/$_d dek-v$_v: Base64URL(transit ciphertext) + decrypt 32B"
             _okcnt=$((_okcnt + 1))
           else
-            echo "  FAIL: dek/$_d dek-v$_v decrypt 길이=${_len:-0}"
+            echo "  FAIL: dek/$_d dek-v$_v decrypted length=${_len:-0}"
             _failcnt=$((_failcnt + 1))
           fi
           ;;
         *)
-          echo "  FAIL: dek/$_d dek-v$_v 값이 Base64URL(transit ciphertext) 형식이 아님"
+          echo "  FAIL: dek/$_d dek-v$_v is not Base64URL(transit ciphertext)"
           _failcnt=$((_failcnt + 1))
           ;;
       esac
@@ -392,18 +395,18 @@ cmd_verify() {
     if new_bao kv get -mount="$MOUNT" "$(bi_path "$_d")" >/dev/null 2>&1; then
       _len=$(new_bao kv get -field=key -mount="$MOUNT" "$(bi_path "$_d")" | b64u_len)
       if [ "$_len" = 32 ]; then
-        ok "blind-index/$_d: 32B 키"
+        ok "blind-index/$_d: 32B key"
         _okcnt=$((_okcnt + 1))
       else
-        echo "  FAIL: blind-index/$_d 키 길이 ${_len}B"
+        echo "  FAIL: blind-index/$_d key length ${_len}B"
         _failcnt=$((_failcnt + 1))
       fi
     else
-      echo "  FAIL: blind-index/$_d 없음"
+      echo "  FAIL: blind-index/$_d missing"
       _failcnt=$((_failcnt + 1))
     fi
   done
-  echo "== 검증 결과: OK $_okcnt / FAIL $_failcnt"
+  echo "== verify result: OK $_okcnt / FAIL $_failcnt"
   [ "$_failcnt" = 0 ] || exit 1
 }
 
