@@ -1,5 +1,9 @@
 # KEK / DEK 키 로테이션 런북
 
+> **2026-11-21 추가: myapp(8082) 인스턴스에 적용한 절차·실측을 §2.4에 정리했다.**
+> 앱 jar 없이 셸/Python으로 DEK 로테이션·재암호화를 수행하는 경로(`vault-crypto/infra-guide/rotate_dek.sh`,
+> `reencrypt_dek.py`)도 함께 추가했다 — 앱 배치가 처리하지 않는 컬럼(예: `users.phone`)까지 다룰 수 있다.
+
 > **2026-11-13 변경: KEK가 OpenBao Transit으로 이관됐다(vault-crypto 2.1.0, demoApp 0.0.21).**
 > KEK 로테이션은 아래 §3(레거시 KV 방식) 대신 **`transit/keys/kek/rotate` + `TransitKekRotationSupport.rewrapAll()`**
 > 으로 수행한다. DEK/데이터는 그대로이며 앱 재시작도 필요 없다. 상세는 `vault-crypto/TRANSIT_KEK.md` §5.
@@ -102,6 +106,96 @@ sequenceDiagram
 
 ---
 
+### 2.4 myapp(8082) 인스턴스 적용 노트 (2026-11-21)
+
+`192.168.2.56`의 myapp은 demoApp과 **같은 코드(0.0.22)** 를 다른 설정으로 띄운 인스턴스다.
+KMS·경로·DB가 다르므로 명령을 그대로 복사하지 말고 아래 값을 쓴다.
+
+| 항목 | demoApp(8080) | myapp(8082) |
+|---|---|---|
+| KMS | `http://192.168.2.57:28200` | `https://192.168.3.221:8200` (root namespace, 사내 CA) |
+| Transit KEK | `transit/myapp-kek2` | `transit/kek` |
+| KV mount / base | `ebiz_service` / `ebiz_db` | `myapp_service` / `kms` |
+| DEK 경로 | `ebiz_service/data/ebiz_db/dek/{board,user-pii}` | `myapp_service/data/kms/dek/{board,user-pii}` |
+| 앱 경로 / 포트 | `/home/xaan/ws/demoBBS`, 8080 | `/home/xaan/ws/myapp`(`app/`), 8082 |
+| DB | `pgvaultdb` | `myappdb`(schema `ebiz`, user `myapp`) |
+| 토큰 정책 | `app-read` | `myapp-app-read`(앱) / `myapp-dek-admin`(ops) |
+
+#### 실행 경로 A — 앱 배치(기존 방식)
+
+`dek_ops_batch.sh`는 `JAR`이 `demoBBS`로 고정되어 있으므로 myapp에서는 인자를 직접 준다.
+
+```bash
+cd /home/xaan/ws/myapp/app
+SPRING_CLOUD_VAULT_TOKEN=<ops-token> \
+java -jar xaandemo-0.0.22.jar \
+  --spring.main.web-application-type=none --spring.main.banner-mode=off \
+  --app.dek-ops.batch-mode=true --app.dek-ops.rotate-domain=board
+# 재암호화는 반드시 별도 실행
+SPRING_CLOUD_VAULT_TOKEN=<ops-token> \
+java -jar xaandemo-0.0.22.jar \
+  --spring.main.web-application-type=none --spring.main.banner-mode=off \
+  --app.dek-ops.batch-mode=true --app.dek-ops.reencrypt-domains=board,user-pii
+```
+
+#### 실행 경로 B — 셸/Python (JVM 불필요, 권장)
+
+`vault-crypto/infra-guide/`의 두 도구를 쓴다. 실행 호스트는 Vault CLI와 psql이 있는 `192.168.2.57`.
+
+```bash
+export BAO_ADDR=https://192.168.3.221:8200
+export BAO_CACERT=/home/xaan/ws/myapp/.ca/hactus-k8s-ca.crt
+export BAO_TOKEN=<ops-token>            # policy myapp-dek-admin
+
+T=/home/xaan/dsh/work/lima2026/vault-crypto/infra-guide
+sh $T/rotate_dek.sh status --domain board,user-pii
+sh $T/rotate_dek.sh rotate --domain board --apply
+sh $T/rotate_dek.sh rotate --domain user-pii --apply
+python3 $T/reencrypt_dek.py --profile myapp            # dry-run
+python3 $T/reencrypt_dek.py --profile myapp --apply    # 적용
+sh $T/rotate_dek.sh retire --domain board --version 1 --apply   # 검증 후
+```
+
+주의: `reencrypt_dek.py`의 `--profile myapp`은 `board.password`, `users.id_no`, **`users.phone`** 을 모두 처리한다.
+앱 배치(`reencryptUserPii`)는 `id_no`만 처리하므로, 앱 배치만 돌리고 옛 DEK를 retire하면 **`phone` 복호화 불가**가 된다.
+
+#### 순서 (양쪽 공통)
+
+1. 백업: `bao kv get -format=json -mount=myapp_service kms/dek/{board,user-pii}` + `pg_dump -t ebiz.board -t ebiz.users`
+2. rotate(도메인별) → `dek-v{n+1}` + `current-version` 갱신, `dek-v{n}` 유지
+3. **앱 재기동** (기동 시 DEK 링 캐시 → 재기동 전까지 신규 쓰기는 옛 버전)
+4. 재암호화(반드시 별도 프로세스 — rotate와 동시 실행 금지)
+5. 검증: 아래 SQL로 전건 현재 버전 확인 → 앱 경유 복호화/회원가입 확인
+6. retire는 재암호화 전 DB 덤프를 폐기한 뒤에 (복원 시 옛 버전 필요)
+
+```sql
+-- 도메인 코드 / DEK 버전 분포 (Base64URL 앞 4글자 = domainCode|keyVersion|…)
+SELECT get_byte(decode(substr(translate(phone,'-_','+/'),1,4),'base64'),0) AS domain_code,
+       get_byte(decode(substr(translate(phone,'-_','+/'),1,4),'base64'),1) AS dek_version,
+       count(*)
+FROM ebiz.users WHERE phone <> '' GROUP BY 1,2 ORDER BY 2;
+```
+
+#### 2026-11-21 실측
+
+| 항목 | 결과 |
+|---|---|
+| rotate | board·user-pii `current-version=2` (dek-v1 유지) |
+| 재암호화 | 7건 — `board.password` 1, `users.id_no` 3, `users.phone` 3 / `failed=0` |
+| 멱등 | 재실행 시 `migrated=0` |
+| 검증 | DB 전건 `domain 1·2 / version 2`, 앱 경유 게시글 복호화·회원가입·`/users` 200 |
+| retire | 임시 도메인에서 rotate→retire 실제 검증. 실데이터 `dek-v1`은 덤프 보관 기간 동안 유지 |
+| 백업 | `/home/xaan/ws/myapp/dek-backup/202611211124/` (600) |
+
+#### 토큰 요건 (사고 사례)
+
+- ops 토큰은 `myapp-dek-admin`(dek 경로 create/update + `transit/encrypt|decrypt|rewrap/kek`) 필요.
+- **반드시 orphan으로 발급한다.** 부모(userpass 로그인 토큰)가 만료되면 자식 토큰이 함께 revoke되어
+  앱 재기동 시 `Token self-lookup failed: 403` → `Status 403 Forbidden [.../dek/board]`로 죽는다(2026-11-20 실제 발생).
+- REST API에서 `{"orphan": true}`는 **무시된다** — `{"no_parent": true}` 또는 CLI `-orphan`을 써야 한다.
+
+---
+
 ## 3. KEK 로테이션 절차
 
 ### 3.1 단계
@@ -185,3 +279,6 @@ sequenceDiagram
 - `src/main/java/com/xaan/demo/service/DekOpsRunner.java` — rotate/reencrypt 트리거 로직(동시 실행 방지 가드 포함)
 - `src/main/java/com/xaan/demo/service/DekReencryptionService.java` — 도메인별 재암호화 배치(레거시 포맷은 `notEnvelopeFormat`으로 구분, 진짜 실패만 `failed`)
 - `dek_ops_batch.sh` / `dek_ops_batch.bat` — 독립 수동 배치 실행 스크립트(운영 서버 대상, ssh 원격 실행)
+- `vault-crypto/infra-guide/rotate_dek.sh` — 앱 없이 DEK rotate/retire/status/unwrap(POSIX sh, 기본 dry-run)
+- `vault-crypto/infra-guide/reencrypt_dek.py` — 앱 없이 재암호화(Python + psql, `--profile myapp`은 phone 포함)
+- `vault-crypto/infra-guide/OpenBao_Key_Rotation_Guide.docx` v1.1 — 인프라팀용 로테이션 가이드(§5.1 셸 경로)

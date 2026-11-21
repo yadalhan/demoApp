@@ -571,7 +571,7 @@ OpenBao kv-v2(`ebiz_service`)로 복사했으며, DB 암호문/애플리케이�
 - Added `KekProvider`/`VaultKekProvider` (KEK storage in Vault, versioned exactly like `DekProvider`/`VaultDekProvider`) and `KekRotationSupport` (issue a new KEK version, then re-wrap a domain's DEKs under it)
 - Added `retire(...)` to `DekProvider`/`VaultDekProvider` and `KekProvider`/`VaultKekProvider` for permanently removing a version once nothing depends on it
 - `bootstrap_kek_dek.py` updated to write the new versioned KEK format
-- Detailed KEK/DEK rotation runbook with procedure diagrams: [KEY_ROTATION_RUNBOOK.md](KEY_ROTATION_RUNBOOK.md)
+- Detailed KEK/DEK rotation runbook with procedure diagrams: [KEY_ROTATION_RUNBOOK.md](KEY_ROTATION_RUNBOOK.md) (myapp 8082 인스턴스 적용 노트·실측: §2.4, 셸/Python 경로 포함)
 - **Breaking**: the wrapped-DEK format changed (adds a version-prefix byte) - the KEK/DEK secrets created for v0.0.5 must be regenerated via the updated `bootstrap_kek_dek.py` before the app can start
 - `vault-crypto` `0.0.5 → 0.0.6`, demoApp `0.0.5 → 0.0.6`
 
