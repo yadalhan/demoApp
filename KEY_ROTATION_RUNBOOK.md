@@ -113,13 +113,13 @@ KMS·경로·DB가 다르므로 명령을 그대로 복사하지 말고 아래 �
 
 | 항목 | demoApp(8080) | myapp(8082) |
 |---|---|---|
-| KMS | `http://192.168.2.57:28200` | `https://192.168.3.221:8200` (root namespace, 사내 CA) |
+| KMS | `http://192.168.2.57:28200` | `https://192.168.3.221:8200` (**namespace `serice_a`**, 사내 CA) |
 | Transit KEK | `transit/myapp-kek2` | `transit/kek` |
 | KV mount / base | `ebiz_service` / `ebiz_db` | `myapp_service` / `kms` |
 | DEK 경로 | `ebiz_service/data/ebiz_db/dek/{board,user-pii}` | `myapp_service/data/kms/dek/{board,user-pii}` |
 | 앱 경로 / 포트 | `/home/xaan/ws/demoBBS`, 8080 | `/home/xaan/ws/myapp`(`app/`), 8082 |
 | DB | `pgvaultdb` | `myappdb`(schema `ebiz`, user `myapp`) |
-| 토큰 정책 | `app-read` | `myapp-app-read`(앱) / `myapp-dek-admin`(ops) |
+| 토큰 정책 | `app-read` | `myapp-app-read`(앱) / `myapp-dek-admin`(ops). **ns 안에서 `-orphan` 발급** |
 
 #### 실행 경로 A — 앱 배치(기존 방식)
 
@@ -186,6 +186,13 @@ FROM ebiz.users WHERE phone <> '' GROUP BY 1,2 ORDER BY 2;
 | 검증 | DB 전건 `domain 1·2 / version 2`, 앱 경유 게시글 복호화·회원가입·`/users` 200 |
 | retire | 임시 도메인에서 rotate→retire 실제 검증. 실데이터 `dek-v1`은 덤프 보관 기간 동안 유지 |
 | 백업 | `/home/xaan/ws/myapp/dek-backup/202611211124/` (600) |
+
+#### 네임스페이스(2026-11-22~)
+
+myapp은 `spring.cloud.vault.namespace=serice_a` 로 동작한다. 명령에는 `--namespace serice_a`(스크립트) /
+`-namespace=serice_a`(CLI, 서브커맨드 뒤) / `BAO_NAMESPACE=serice_a` 를 적용한다.
+키·정책·토큰이 모두 네임스페이스 로컬이고, `sys/health`는 ns에서 400이므로 루트에서 확인한다
+(Actuator `vault` health가 DOWN으로 보이는 원인). 상세: `vault-crypto/NAMESPACE.md`.
 
 #### 토큰 요건 (사고 사례)
 
