@@ -377,6 +377,22 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 ## Release History
 
+### 0.0.24 (2026-11-22)
+
+**Vault health indicator가 네임스페이스에서도 동작하도록 수정 (health DOWN/503 해소).**
+
+기존 `com.xaan.demo.config.VaultHealthIndicator`는 `sys/health`를 호출했다. 이 엔드포인트는 노드 수준이라
+네임스페이스 헤더와 함께 호출하면 `400 operation unavailable in namespaces`가 되고, 그 결과
+`/actuator/health`가 **DOWN(503)** 으로 표시됐다(암호화는 정상). `auth/token/lookup-self` 기반으로 교체했다.
+
+- 프로브 변경: `sys/health` → `auth/token/lookup-self` (네임스페이스 범위, 읽기 전용, 토큰 자체를 검증)
+- 상태 규칙: 토큰 무효/만료/네임스페이스 불일치 → **DOWN**, `ttl <= vault.health.token-warn-ttl`(기본 6h) → **OUT_OF_SERVICE**,
+  그 외 **UP**(상세: `ttlSeconds`, `policies`, `renewable`, `namespace`)
+- `vault.health.enabled=false`로 지표를 끌 수 있음(`@ConditionalOnProperty`) — 배포 없이 비활성화 가능
+- `management.health.vault.enabled=false`(Spring Cloud Vault 기본 지표)는 이 커스텀 컴포넌트에는 적용되지 않음
+- 검증: `namespace=serice_a` myapp에서 health **UP(200)**, `vault: UP {ttlSeconds, policies:[default, myapp-app-read], namespace: serice_a/}`,
+  지표 비활성(`--vault.health.enabled=false`) 시 컴포넌트 제거, `--vault.health.token-warn-ttl=1000h` 시 **OUT_OF_SERVICE(503)** 전이 확인
+
 ### 0.0.23 (2026-11-19)
 
 **vault-crypto 2.2.0 적용(OpenBao 네임스페이스 지원 릴리스).** 애플리케이션 코드/설정 변경은 없고 의존성만 올렸다.

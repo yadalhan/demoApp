@@ -81,6 +81,22 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 - **build-with-env.sh**: Sets JAVA_HOME automatically
 - **deploy.sh**: Builds with Java 21 and deploys to production
 
+### Recent Changes (2026-11-22)
+
+1. **Fixed `/actuator/health` reporting DOWN inside an OpenBao namespace (0.0.23 → 0.0.24).** The app's own
+   `com.xaan.demo.config.VaultHealthIndicator` read `sys/health`, which is node-level and returns
+   `400 operation unavailable in namespaces` whenever `spring.cloud.vault.namespace` is set - so the aggregate
+   health was DOWN/503 while encryption worked fine. Two things were learned/verified the hard way:
+   (a) `management.health.vault.enabled=false` only gates Spring Cloud Vault's *auto-configured* indicator
+   (`@ConditionalOnEnabledHealthIndicator("vault")`), NOT an app-defined `@Component`; (b) excluding
+   `VaultHealthIndicatorAutoConfiguration` therefore also changes nothing. The indicator now probes
+   `auth/token/lookup-self` (namespace-scoped, read-only, validates the app token itself) and reports
+   UP / OUT_OF_SERVICE(`vault.health.token-warn-ttl`, default 6h) / DOWN(token invalid, namespace mismatch),
+   with `ttlSeconds`/`policies`/`namespace` details. It is gated by `vault.health.enabled` (default true) so a
+   future namespace-related breakage can be switched off without a rebuild. Verified live on myapp
+   (`namespace=serice_a`): health UP(200) with `namespace: serice_a/`, indicator absent when disabled,
+   OUT_OF_SERVICE(503) with a 1000h warn threshold.
+
 ### Recent Changes (2026-11-08)
 
 1. **KMS cutover to OpenBao 2.6.2 (operator-executed).** Both app instances now point at `http://192.168.2.57:28200`:
