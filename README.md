@@ -377,6 +377,17 @@ ENTRYPOINT ["java", "-jar", "/app.jar"]
 
 ## Release History
 
+### 0.0.25 (2026-11-22)
+
+**vault-crypto 2.3.0 자동 구성 도입 — 앱에서 `CryptoConfig`·`VaultHealthIndicator` 삭제.**
+
+- `CryptoConfig.java` 제거: 도메인/블라인드 인덱스 빈을 `vault.crypto.*` 설정으로 대체
+  (`boardCryptoService`, `userPiiCryptoService`, `phoneBlindIndexService`, `rrnBlindIndexService` 이름 유지)
+- `VaultHealthIndicator.java` 제거: vault-crypto의 `vaultToken` 지표(`auth/token/lookup-self`) 사용
+- `build.gradle`: `com.xaan:vault-crypto:2.2.0` → `2.3.0`
+- 검증(myapp, `namespace=serice_a`): health **UP(200)**, `vaultToken: UP {ttlSeconds, policies, namespace: serice_a/}`,
+  게시글 복호화 200, 회원가입/로그인/`/users` 200, 신규 행 `domain=2/ver=1`, 로그 WARN/ERROR 0
+
 ### 0.0.24 (2026-11-22)
 
 **Vault health indicator가 네임스페이스에서도 동작하도록 수정 (health DOWN/503 해소).**

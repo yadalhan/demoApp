@@ -81,6 +81,20 @@ export PATH=/opt/gradle/gradle-8.7/bin:$PATH
 - **build-with-env.sh**: Sets JAVA_HOME automatically
 - **deploy.sh**: Builds with Java 21 and deploys to production
 
+### Recent Changes (2026-11-22, later)
+
+1. **Moved the crypto wiring out of the app: vault-crypto 2.3.0 auto-configuration (0.0.24 → 0.0.25).** With
+   `CryptoConfig.java` and `VaultHealthIndicator.java` deleted, the app now relies entirely on vault-crypto's Spring
+   Boot auto-configuration: `vault.crypto.domains[]` declares `board`(1)/`user-pii`(2) (bean names
+   `boardCryptoService`/`userPiiCryptoService`), `vault.crypto.blind-indexes[]` declares `user-phone`/`user-rrn` with
+   explicit `bean-name=phoneBlindIndexService`/`rrnBlindIndexService` (the derived camelCase name would differ), and
+   `vault.health.token-warn-ttl` tunes the `vaultToken` indicator. First deploy failed with
+   `required a bean of type EnvelopeCryptoService` - the auto-configuration's `@ConditionalOnBean(VaultOperations)`
+   was evaluated before Spring Cloud Vault registered its template; fixed upstream in vault-crypto by adding
+   `@AutoConfigureAfter(name = "org.springframework.cloud.vault.config.VaultAutoConfiguration")`. Verified after the
+   fix: health UP with `vaultToken` UP, board decrypt 200, register/login/`/users` 200, new row `domain=2/ver=1`,
+   zero WARN/ERROR in the log.
+
 ### Recent Changes (2026-11-22)
 
 1. **Fixed `/actuator/health` reporting DOWN inside an OpenBao namespace (0.0.23 → 0.0.24).** The app's own
