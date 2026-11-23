@@ -51,14 +51,14 @@ def main():
     kek = os.urandom(32)
 
     print("=" * 78)
-    print("1) KEK 저장 (마스터 키, version=1 - DEK를 wrap하는 용도로만 사용)")
+    print("1) Store the KEK (master key, version=1 - used only to wrap DEKs)")
     print("=" * 78)
     print(f"vault kv put -mount={MOUNT} {BASE_PATH}/kek \\\n"
           f"  kek-v{KEK_VERSION}=\"{b64url(kek)}\" \\\n"
           f"  current-version=\"{KEK_VERSION}\"\n")
 
     print("=" * 78)
-    print("2) 도메인별 DEK 생성 및 저장 (version=1, KEK v1로 wrap됨)")
+    print("2) Generate and store one DEK per domain (version=1, wrapped with KEK v1)")
     print("=" * 78)
     for domain in DOMAINS:
         dek = os.urandom(32)
@@ -69,17 +69,17 @@ def main():
               f"  current-version=\"1\"\n")
 
     print("=" * 78)
-    print("확인용 명령어")
+    print("Verification commands")
     print("=" * 78)
     print(f"vault kv get -mount={MOUNT} {BASE_PATH}/kek")
     for domain in DOMAINS:
         print(f"vault kv get -mount={MOUNT} {BASE_PATH}/dek/{domain}")
 
-    print("\n[주의] 이 출력에는 평문 KEK와 wrap된 DEK가 포함되어 있습니다.")
-    print("       터미널 기록/로그에 남기지 말고, 위 명령을 실행한 후 즉시 화면을 지우세요.")
-    print("       생성된 키는 이 스크립트를 다시 실행할 때마다 달라지므로, 마지막에 실행한 결과만 적용하세요.")
-    print("\n[참고] vault-crypto 0.0.5 이하로 만든 kek/dek 시크릿이 이미 있다면, 이 출력으로 덮어써야")
-    print("       0.0.6의 버전 인식 포맷(kekVersion 헤더 포함)과 맞습니다. KEY_ROTATION_RUNBOOK.md 참고.")
+    print("\n[WARNING] This output contains the plaintext KEK and the wrapped DEKs.")
+    print("          Do not leave it in terminal history/logs; run the commands above and then clear the screen immediately.")
+    print("          The generated keys differ every time this script runs, so apply only the result of the last run.")
+    print("\n[NOTE] If kek/dek secrets created with vault-crypto 0.0.5 or earlier already exist, overwrite them with this output")
+    print("       so they match 0.0.6's version-aware format (which includes the kekVersion header). See KEY_ROTATION_RUNBOOK.md.")
 
 
 if __name__ == "__main__":

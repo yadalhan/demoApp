@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""demoApp wrapped DEK를 KV KEK → OpenBao Transit으로 이관한다 (vault-crypto 2.1.0).
+"""Migrate demoApp's wrapped DEKs from the KV KEK to OpenBao Transit (vault-crypto 2.1.0).
 
-데이터(암호문)는 건드리지 않고, KV의 wrapped DEK만 Transit ciphertext로 바꾼다.
-이관 전 값을 백업 파일(기본 ./dek_transit_backup.json, 600)로 남긴다.
+The data (ciphertext) is left untouched; only the wrapped DEKs in KV are converted to Transit ciphertext.
+The pre-migration values are saved to a backup file (default ./dek_transit_backup.json, mode 600).
 
   BAO_TOKEN=<admin> python3 migrate_dek_to_transit.py --backup ./dek_transit_backup.json
 
-이관 후:
-  1) 정책 demoapp-read 에 transit/decrypt/kek 추가
-  2) demoApp 0.0.21(TransitKeyWrapper) 배포
-  3) 검증 후 KV kek 경로 삭제 및 정책에서 kek read 제거
+After the migration:
+  1) Add transit/decrypt/kek to the demoapp-read policy
+  2) Deploy demoApp 0.0.21 (TransitKeyWrapper)
+  3) After verification, delete the KV kek path and remove kek read from the policy
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ def kv_write(addr, token, mount, path, data) -> None:
 
 
 def unwrap_dek(wrapped: bytes, kek: bytes) -> bytes:
-    """KV KEK 형식: kekVersion(1) | IV(12) | ciphertext+tag(48)."""
+    """KV KEK format: kekVersion(1) | IV(12) | ciphertext+tag(48)."""
     if len(wrapped) != 61:
         raise SystemExit(f"unexpected wrapped DEK length {len(wrapped)} (expected 61)")
     if wrapped[0] != 1:
