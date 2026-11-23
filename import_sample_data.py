@@ -30,6 +30,11 @@ BCrypt가 필요한 경우에만 `bcrypt` 모듈을 사용한다(이미 해시�
   # DB/토큰을 직접 지정
   ./import_sample_data.py --db-host 192.168.2.57 --db-password-file ~/.myapp/dbpw \
       --vault-token-file ~/.myapp/token
+
+  # https + 사설 CA + 네임스페이스 (myapp 현재 구성: namespace=serice_a, transit key=kek)
+  set -a; . ~/.openbao/ops.env; set +a          # VAULT_ADDR / VAULT_CACERT / VAULT_TOKEN
+  ./import_sample_data.py --board board.json --users users.json \
+      --namespace serice_a --transit-key kek --truncate
 """
 from __future__ import annotations
 
@@ -41,6 +46,7 @@ import hmac
 import json
 import os
 import re
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -122,19 +128,28 @@ def bcrypt_value(raw: str) -> tuple[str, bool]:
 
 # ---------------------------------------------------------------- OpenBao client
 class OpenBao:
-    def __init__(self, addr: str, token: str, timeout: int = 20):
+    def __init__(self, addr: str, token: str, namespace: str | None = None,
+                 cacert: str | None = None, timeout: int = 20):
         self.addr = addr.rstrip("/")
         self.token = token
+        self.namespace = (namespace or "").strip()
         self.timeout = timeout
+        # https with a private CA needs an explicit trust anchor (urllib does not read
+        # VAULT_CACERT on its own)
+        self.ssl_context = ssl.create_default_context(cafile=cacert) if cacert else None
 
     def call(self, method: str, path: str, payload: dict | None = None) -> dict:
         data = json.dumps(payload).encode() if payload is not None else None
         req = urllib.request.Request(f"{self.addr}/v1/{path.lstrip('/')}", data=data, method=method)
         req.add_header("X-Vault-Token", self.token)
+        if self.namespace:
+            # a namespace token is only valid inside its namespace; -orphan tokens issued there
+            # still need this header on every request
+            req.add_header("X-Vault-Namespace", self.namespace)
         if data:
             req.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ssl_context) as resp:
                 body = resp.read().decode() or "{}"
                 return json.loads(body) if body.strip() else {}
         except urllib.error.HTTPError as e:
@@ -271,13 +286,23 @@ def parse_args(argv=None):
     p.add_argument("--board", default="board.json", help="board JSON 경로 (기본 board.json)")
     p.add_argument("--users", default="users.json", help="users JSON 경로 (기본 users.json)")
 
-    p.add_argument("--vault-addr", default=os.environ.get("BAO_ADDR", "http://192.168.2.57:28200"))
+    p.add_argument("--vault-addr",
+                   default=os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR")
+                   or "http://192.168.2.57:28200")
     p.add_argument("--vault-token", default=os.environ.get("VAULT_TOKEN") or os.environ.get("BAO_TOKEN"))
     p.add_argument("--vault-token-file", default="~/.myapp/token")
+    p.add_argument("--vault-cacert",
+                   default=os.environ.get("BAO_CACERT") or os.environ.get("VAULT_CACERT"),
+                   help="https 인증서 검증용 CA 파일(사설 CA일 때 필요)")
+    p.add_argument("--namespace",
+                   default=os.environ.get("BAO_NAMESPACE") or os.environ.get("VAULT_NAMESPACE"),
+                   help="OpenBao 네임스페이스 (X-Vault-Namespace)")
     p.add_argument("--mount", default="myapp_service", help="kv-v2 mount")
     p.add_argument("--base", default="kms", help="기본 경로(base)")
     p.add_argument("--transit-mount", default="transit")
-    p.add_argument("--transit-key", default="myapp-kek2")
+    p.add_argument("--transit-key",
+                   default=os.environ.get("BAO_TRANSIT_KEY") or os.environ.get("VAULT_TRANSIT_KEY")
+                   or "myapp-kek2")
 
     p.add_argument("--db-host", default=os.environ.get("DB_HOST", "192.168.2.57"))
     p.add_argument("--db-port", default=int(os.environ.get("DB_PORT", "21716")), type=int)
@@ -323,11 +348,11 @@ def main(argv=None) -> int:
 
     print(f"입력: board {len(board_rows)}건, users {len(user_rows)}건")
     print(f"대상 DB: {args.db_user}@{args.db_host}:{args.db_port}/{args.db_name}")
-    print(f"OpenBao: {args.vault_addr} (mount={args.mount}, base={args.base}, "
-          f"transit={args.transit_mount}/keys/{args.transit_key})")
+    print(f"OpenBao: {args.vault_addr} (namespace={args.namespace or 'root'}, mount={args.mount}, base={args.base}, "
+          f"transit={args.transit_mount}/keys/{args.transit_key}, cacert={args.vault_cacert or '-'})")
 
     # 1) 키 로드
-    bao = OpenBao(args.vault_addr, args.vault_token)
+    bao = OpenBao(args.vault_addr, args.vault_token, namespace=args.namespace, cacert=args.vault_cacert)
     board_key = load_domain_key(bao, args.mount, args.base, args.transit_mount, args.transit_key, "board")
     user_key = load_domain_key(bao, args.mount, args.base, args.transit_mount, args.transit_key, "user-pii")
     phone_key = bao.kv_read(args.mount, f"{args.base}/blind-index/user-phone")["key"]
