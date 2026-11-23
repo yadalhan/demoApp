@@ -1,37 +1,37 @@
 #!/usr/bin/env python3
-"""샘플 JSON(board/users)을 myapp DB로 일괄 import한다.
+"""Bulk-import sample JSON (board/users) into the myapp database.
 
-JSON의 암호화 대상 컬럼은 **암호화 전 평문**이므로, 이 스크립트가 vault-crypto와 동일한 방식으로
-암호화해서 넣는다.
+Encrypted columns in the JSON hold plaintext, so this script applies the same envelope
+encryption vault-crypto uses before loading the rows.
 
-  board.password                        → 봉투 암호화(도메인 board, domainCode=1)
-  users.id_no, users.phone              → 봉투 암호화(도메인 user-pii, domainCode=2)
-  users.phone_blind_idx, id_no_blind_idx → HMAC-SHA256 blind index (Base64URL, 43자)
-  users.password                        → 이미 BCrypt 해시면 그대로, 평문이면 BCrypt(rounds=10)로 해시
+  board.password                         -> envelope encryption (domain "board", domainCode=1)
+  users.id_no, users.phone               -> envelope encryption (domain "user-pii", domainCode=2)
+  users.phone_blind_idx, id_no_blind_idx -> HMAC-SHA256 blind index (Base64URL, 43 chars)
+  users.password                         -> kept if already BCrypt, otherwise hashed with BCrypt(rounds=10)
 
-암호화에 쓰는 키(모두 OpenBao에서 읽는다):
+Keys used for encryption (all read from OpenBao):
   - wrapped DEK: {mount}/data/{base}/dek/{domain}  (dek-v{n} = Base64URL(UTF-8("vault:vN:...")))
-  - DEK 평문:    transit/decrypt/{transit_key} 로만 획득 (KEK는 반출되지 않음)
+  - plaintext DEK: only via transit/decrypt/{transit_key} (the KEK never leaves Transit)
   - blind index: {mount}/data/{base}/blind-index/{user-phone,user-rrn}
 
-전송 방식: psql 클라이언트의 \\copy(CSV)로 한 트랜잭션에 적재한다(psycopg2 불필요).
-BCrypt가 필요한 경우에만 `bcrypt` 모듈을 사용한다(이미 해시면 불필요).
+Transport: loaded in a single transaction through the psql client (\\copy CSV), so psycopg2 is not needed.
+The `bcrypt` module is imported only when a plaintext password actually needs hashing.
 
-사용 예)
-  # 미리보기(아무것도 쓰지 않음)
+Examples)
+  # preview only (writes nothing)
   ./import_sample_data.py --board board.json --users users.json --dry-run
 
-  # 적재 (테이블이 비어 있을 때만)
+  # load (only when the tables are empty)
   ./import_sample_data.py --board board.json --users users.json
 
-  # 기존 데이터를 지우고 다시 적재
+  # wipe existing rows and load again
   ./import_sample_data.py --board board.json --users users.json --truncate
 
-  # DB/토큰을 직접 지정
+  # explicit database/token
   ./import_sample_data.py --db-host 192.168.2.57 --db-password-file ~/.myapp/dbpw \
       --vault-token-file ~/.myapp/token
 
-  # https + 사설 CA + 네임스페이스 (myapp 현재 구성: namespace=serice_a, transit key=kek)
+  # https + private CA + namespace (current myapp setup: namespace=serice_a, transit key=kek)
   set -a; . ~/.openbao/ops.env; set +a          # VAULT_ADDR / VAULT_CACERT / VAULT_TOKEN
   ./import_sample_data.py --board board.json --users users.json \
       --namespace serice_a --transit-key kek --truncate
@@ -63,7 +63,7 @@ DEK_LENGTH_BYTES = 32
 IV_LENGTH_BYTES = 12
 TAG_LENGTH_BYTES = 16
 
-# demoApp CryptoConfig와 동일한 도메인 코드
+# Domain codes - must match the ones stored in existing ciphertext headers
 DOMAIN_CODES = {"board": 1, "user-pii": 2}
 
 BOARD_COLUMNS = ("id", "created_date", "modified_date", "author", "content", "title", "password")
@@ -73,7 +73,7 @@ USER_COLUMNS = ("id", "password", "user_id", "username", "id_no", "phone",
 
 # ---------------------------------------------------------------- encoding helpers
 def b64u(raw: bytes) -> str:
-    """Base64URL, 패딩 없음 (vault-crypto와 동일)."""
+    """Base64URL without padding (same encoding vault-crypto uses)."""
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
@@ -90,7 +90,7 @@ def envelope_encrypt(dek: bytes, domain_code: int, key_version: int, plaintext: 
 
 
 def envelope_decrypt(dek: bytes, encrypted: str) -> str:
-    """검증용 - import 결과를 되돌려 평문과 비교한다(앱과 동일 포맷 확인)."""
+    """Verification helper: decrypt an imported value to prove the app can read the format."""
     combined = b64u_decode(encrypted)
     if len(combined) < 2 + IV_LENGTH_BYTES + TAG_LENGTH_BYTES:
         raise ValueError(f"envelope too short: {len(combined)} bytes")
@@ -103,25 +103,25 @@ def envelope_version(encrypted: str) -> int:
 
 
 def blind_index(key: bytes, value: str) -> str:
-    """HMAC-SHA256 → Base64URL(43자). 호출 전 정규화는 호출자 책임(앱과 동일 규칙)."""
+    """HMAC-SHA256 -> Base64URL (43 chars). Normalization is the caller's job, as in the app."""
     return b64u(hmac.new(key, value.encode("utf-8"), hashlib.sha256).digest())
 
 
 def normalize_phone(phone: str) -> str:
-    """UserService.normalizePhone()과 동일: 숫자만 남긴다."""
+    """Same rule as UserService.normalizePhone(): keep digits only."""
     return re.sub(r"[^0-9]", "", phone or "")
 
 
 def normalize_rrn(rrn: str) -> str:
-    """앱은 주민번호를 정규화하지 않고 front+back 13자리를 그대로 쓴다."""
+    """The app does not normalize the RRN; front+back (13 digits) is used as-is."""
     return (rrn or "").strip()
 
 
 def bcrypt_value(raw: str) -> tuple[str, bool]:
-    """이미 BCrypt 해시면 그대로, 평문이면 해시한다. (값, 해시여부) 반환."""
+    """Return the value unchanged if it is already a BCrypt hash, else hash it. -> (value, hashed)."""
     if BCRYPT_PATTERN.match(raw or ""):
         return raw, False
-    import bcrypt  # 평문이 섞여 있을 때만 필요
+    import bcrypt  # only needed when a plaintext password shows up
 
     return bcrypt.hashpw(raw.encode("utf-8"), bcrypt.gensalt(rounds=10)).decode(), True
 
@@ -156,7 +156,7 @@ class OpenBao:
             detail = e.read().decode(errors="replace")[:300]
             raise SystemExit(f"OpenBao {method} {path} -> HTTP {e.code}: {detail}")
         except urllib.error.URLError as e:
-            raise SystemExit(f"OpenBao 연결 실패({self.addr}): {e.reason}")
+            raise SystemExit(f"OpenBao connection failed ({self.addr}): {e.reason}")
 
     def kv_read(self, mount: str, path: str) -> dict:
         return self.call("GET", f"{mount}/data/{path}")["data"]["data"]
@@ -180,17 +180,17 @@ def load_domain_key(bao: OpenBao, mount: str, base: str, transit_mount: str, tra
     version = int(secret.get("current-version", 1))
     field = secret.get(f"dek-v{version}")
     if not field:
-        raise SystemExit(f"{base}/dek/{domain}: dek-v{version} 필드가 없습니다")
+        raise SystemExit(f"{base}/dek/{domain}: dek-v{version} field is missing")
     try:
         wrapped = b64u_decode(field).decode("utf-8")
     except (ValueError, UnicodeDecodeError) as e:
         raise SystemExit(
-            f"{base}/dek/{domain}: dek-v{version} 값이 Base64URL(UTF-8(ciphertext)) 형식이 아닙니다 - {e}")
+            f"{base}/dek/{domain}: dek-v{version} is not Base64URL(UTF-8(ciphertext)) - {e}")
     if not wrapped.startswith("vault:"):
-        raise SystemExit(f"{base}/dek/{domain}: Transit ciphertext가 아닙니다: {wrapped[:12]}...")
+        raise SystemExit(f"{base}/dek/{domain}: not a Transit ciphertext: {wrapped[:12]}...")
     dek = bao.transit_decrypt(transit_mount, transit_key, wrapped)
     if len(dek) != DEK_LENGTH_BYTES:
-        raise SystemExit(f"{base}/dek/{domain}: DEK 길이 {len(dek)} (기대 32)")
+        raise SystemExit(f"{base}/dek/{domain}: DEK is {len(dek)} bytes (expected 32)")
     return DomainKey(domain=domain, domain_code=DOMAIN_CODES[domain], version=version, dek=dek)
 
 
@@ -236,7 +236,7 @@ def transform_board(rows: list[dict], board_key: DomainKey, report: dict) -> lis
 
 # ---------------------------------------------------------------- psql (COPY) writer
 def run_psql_file(args, sql_path: Path) -> str:
-    """psql COPY 메타 명령은 -c 가 아니라 -f(파일)로만 실행된다."""
+    """psql meta commands such as COPY only work from -f (a file), not from -c."""
     env = dict(os.environ)
     if args.db_password:
         env["PGPASSWORD"] = args.db_password
@@ -248,7 +248,7 @@ def run_psql_file(args, sql_path: Path) -> str:
     ]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise SystemExit(f"psql 실패(롤백됨):\n{proc.stderr.strip()[:2000]}")
+        raise SystemExit(f"psql failed (rolled back):\n{proc.stderr.strip()[:2000]}")
     return proc.stdout
 
 
@@ -260,13 +260,13 @@ def query_scalar(args, sql: str) -> str:
            "-d", args.db_name, "-v", "ON_ERROR_STOP=1", "--no-psqlrc", "-At", "-c", sql]
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if proc.returncode != 0:
-        raise SystemExit(f"psql 실패:\n{proc.stderr.strip()[:2000]}")
+        raise SystemExit(f"psql failed:\n{proc.stderr.strip()[:2000]}")
     return proc.stdout.strip()
 
 
 def write_csv(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
-    """COPY ... (format csv) 는 header 라인을 읽지 않으므로 데이터만 쓴다."""
-    del header  # 컬럼 순서는 COPY 문에서 지정한다
+    """COPY ... (format csv) does not consume the header line, so write data rows only."""
+    del header  # the column order is specified by the COPY statement
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh, quoting=csv.QUOTE_MINIMAL)
         for row in rows:
@@ -276,15 +276,15 @@ def write_csv(path: Path, header: tuple[str, ...], rows: list[tuple]) -> None:
 def copy_from(path: Path, table: str, columns: tuple[str, ...], null_marker: bool) -> str:
     opts = "format csv"
     if null_marker:
-        opts += ", null ''"          # 빈 문자열은 NULL로
+        opts += ", null ''"          # write empty strings as NULL
     return f"\\copy {table} ({', '.join(columns)}) from '{path}' with ({opts})"
 
 
 # ---------------------------------------------------------------- main
 def parse_args(argv=None):
-    p = argparse.ArgumentParser(description="샘플 JSON을 myapp DB로 import (암호화 포함)")
-    p.add_argument("--board", default="board.json", help="board JSON 경로 (기본 board.json)")
-    p.add_argument("--users", default="users.json", help="users JSON 경로 (기본 users.json)")
+    p = argparse.ArgumentParser(description="Import sample JSON into the myapp database (with encryption)")
+    p.add_argument("--board", default="board.json", help="board JSON path (default board.json)")
+    p.add_argument("--users", default="users.json", help="users JSON path (default users.json)")
 
     p.add_argument("--vault-addr",
                    default=os.environ.get("BAO_ADDR") or os.environ.get("VAULT_ADDR")
@@ -293,12 +293,12 @@ def parse_args(argv=None):
     p.add_argument("--vault-token-file", default="~/.myapp/token")
     p.add_argument("--vault-cacert",
                    default=os.environ.get("BAO_CACERT") or os.environ.get("VAULT_CACERT"),
-                   help="https 인증서 검증용 CA 파일(사설 CA일 때 필요)")
+                   help="CA bundle used to verify the https certificate (required for a private CA)")
     p.add_argument("--namespace",
                    default=os.environ.get("BAO_NAMESPACE") or os.environ.get("VAULT_NAMESPACE"),
-                   help="OpenBao 네임스페이스 (X-Vault-Namespace)")
+                   help="OpenBao namespace (sent as X-Vault-Namespace)")
     p.add_argument("--mount", default="myapp_service", help="kv-v2 mount")
-    p.add_argument("--base", default="kms", help="기본 경로(base)")
+    p.add_argument("--base", default="kms", help="base path inside the mount")
     p.add_argument("--transit-mount", default="transit")
     p.add_argument("--transit-key",
                    default=os.environ.get("BAO_TRANSIT_KEY") or os.environ.get("VAULT_TRANSIT_KEY")
@@ -310,13 +310,13 @@ def parse_args(argv=None):
     p.add_argument("--db-user", default=os.environ.get("DB_USERNAME", "myapp"))
     p.add_argument("--db-password", default=os.environ.get("PGPASSWORD"))
     p.add_argument("--db-password-file", default="~/.myapp/dbpw")
-    p.add_argument("--psql", default="psql", help="psql 실행 경로")
+    p.add_argument("--psql", default="psql", help="path to the psql binary")
 
-    p.add_argument("--truncate", action="store_true", help="적재 전에 users/board 를 비운다")
+    p.add_argument("--truncate", action="store_true", help="truncate users/board before loading")
     p.add_argument("--append", action="store_true",
-                   help="기존 데이터를 유지하고 추가한다(이미 있는 id/user_id 행은 건너뜀)")
-    p.add_argument("--dry-run", action="store_true", help="DB에 쓰지 않고 변환 결과만 확인")
-    p.add_argument("--limit", type=int, default=0, help="행 수 제한(테스트용, 0=전체)")
+                   help="keep existing rows and append (rows with an existing id/user_id are skipped)")
+    p.add_argument("--dry-run", action="store_true", help="convert and verify without writing to the database")
+    p.add_argument("--limit", type=int, default=0, help="limit the number of rows (testing only, 0=all)")
     return p.parse_args(argv)
 
 
@@ -335,10 +335,10 @@ def main(argv=None) -> int:
 
     args.vault_token = resolve_secret(args.vault_token, args.vault_token_file)
     if not args.vault_token:
-        raise SystemExit("OpenBao 토큰이 필요합니다 (--vault-token, VAULT_TOKEN, 또는 ~/.myapp/token)")
+        raise SystemExit("an OpenBao token is required (--vault-token, VAULT_TOKEN, or ~/.myapp/token)")
     args.db_password = resolve_secret(args.db_password, args.db_password_file)
     if not args.db_password:
-        raise SystemExit("DB 비밀번호가 필요합니다 (--db-password, PGPASSWORD, 또는 ~/.myapp/dbpw)")
+        raise SystemExit("a database password is required (--db-password, PGPASSWORD, or ~/.myapp/dbpw)")
 
     board_rows = json.load(open(Path(args.board), encoding="utf-8"))["board"]
     user_rows = json.load(open(Path(args.users), encoding="utf-8"))["users"]
@@ -346,60 +346,60 @@ def main(argv=None) -> int:
         board_rows = board_rows[:args.limit]
         user_rows = user_rows[:args.limit]
 
-    print(f"입력: board {len(board_rows)}건, users {len(user_rows)}건")
-    print(f"대상 DB: {args.db_user}@{args.db_host}:{args.db_port}/{args.db_name}")
+    print(f"input: board {len(board_rows)} rows, users {len(user_rows)} rows")
+    print(f"target DB: {args.db_user}@{args.db_host}:{args.db_port}/{args.db_name}")
     print(f"OpenBao: {args.vault_addr} (namespace={args.namespace or 'root'}, mount={args.mount}, base={args.base}, "
           f"transit={args.transit_mount}/keys/{args.transit_key}, cacert={args.vault_cacert or '-'})")
 
-    # 1) 키 로드
+    # 1) load keys
     bao = OpenBao(args.vault_addr, args.vault_token, namespace=args.namespace, cacert=args.vault_cacert)
     board_key = load_domain_key(bao, args.mount, args.base, args.transit_mount, args.transit_key, "board")
     user_key = load_domain_key(bao, args.mount, args.base, args.transit_mount, args.transit_key, "user-pii")
     phone_key = bao.kv_read(args.mount, f"{args.base}/blind-index/user-phone")["key"]
     rrn_key = bao.kv_read(args.mount, f"{args.base}/blind-index/user-rrn")["key"]
     phone_key, rrn_key = b64u_decode(phone_key), b64u_decode(rrn_key)
-    print(f"키 로드 완료: board DEK v{board_key.version}(domainCode={board_key.domain_code}), "
+    print(f"keys loaded: board DEK v{board_key.version} (domainCode={board_key.domain_code}), "
           f"user-pii DEK v{user_key.version}(domainCode={user_key.domain_code}), "
           f"blind-index {len(phone_key)}/{len(rrn_key)} bytes")
 
-    # 2) 변환
+    # 2) transform
     report = {"bcrypt_hashed": 0, "board_blank_password": 0}
     users_out = transform_users(user_rows, user_key, phone_key, rrn_key, report)
     board_out = transform_board(board_rows, board_key, report)
-    print(f"변환 완료: users {len(users_out)}건, board {len(board_out)}건"
-          + (f", BCrypt 신규 해시 {report['bcrypt_hashed']}건" if report["bcrypt_hashed"] else "")
-          + (f", password 없음 {report['board_blank_password']}건" if report["board_blank_password"] else ""))
+    print(f"transformed: users {len(users_out)} rows, board {len(board_out)} rows"
+          + (f", {report['bcrypt_hashed']} password(s) newly hashed" if report["bcrypt_hashed"] else "")
+          + (f", {report['board_blank_password']} board row(s) without a password" if report["board_blank_password"] else ""))
 
-    # 3) 자체 검증(암호화 round-trip) - 앱과 같은 포맷인지 확인
+    # 3) self-check: round-trip one value to prove the app-side format matches
     sample = next((r for r in user_rows if r.get("phone")), None)
     if sample:
         stored = users_out[user_rows.index(sample)][5]
         plain = envelope_decrypt(user_key.dek, stored)
         expected = normalize_phone(str(sample["phone"]))
         if plain != expected:
-            raise SystemExit(f"round-trip 실패: {plain!r} != {expected!r}")
+            raise SystemExit(f"round-trip failed: {plain!r} != {expected!r}")
         if envelope_version(stored) != user_key.version:
-            raise SystemExit("round-trip 실패: keyVersion 헤더 불일치")
-        print(f"round-trip 확인: users.phone 암호문 {len(stored)}자 → 복호화 일치, keyVersion={user_key.version}")
+            raise SystemExit("round-trip failed: keyVersion header mismatch")
+        print(f"round-trip OK: users.phone ciphertext {len(stored)} chars -> decrypts to the original, keyVersion={user_key.version}")
 
     if args.dry_run:
-        print("\n[dry-run] DB에 쓰지 않았습니다. 변환 샘플:")
+        print("\n[dry-run] nothing written. sample of the transformed rows:")
         if users_out:
             u = users_out[0]
             print(f"  users[0] id={u[0]} user_id={u[2]} pw={u[1][:7]}... "
-                  f"id_no={u[4][:12]}...({len(u[4])}자) phone={u[5][:12]}...({len(u[5])}자) "
+                  f"id_no={u[4][:12]}...({len(u[4])} chars) phone={u[5][:12]}...({len(u[5])} chars) "
                   f"phone_idx={u[6]} rrn_idx={u[7]}")
         if board_out:
             b = board_out[0]
-            print(f"  board[0] id={b[0]} title={b[5]!r} password={b[6][:12]}...({len(b[6])}자)")
+            print(f"  board[0] id={b[0]} title={b[5]!r} password={b[6][:12]}...({len(b[6])} chars)")
         return 0
 
-    # 4) 적재 전 확인 - 비어 있지 않으면 거부(실수 방지)
+    # 4) refuse to load over existing data unless --truncate/--append was explicit
     existing_b = int(query_scalar(args, "select count(*) from ebiz.board") or 0)
     existing_u = int(query_scalar(args, "select count(*) from ebiz.users") or 0)
     skipped_b = skipped_u = 0
     if (existing_b or existing_u) and args.append:
-        # 기존 행과 id/user_id가 겹치는 샘플은 건너뛴다(UNIQUE 위반으로 전체가 롤백되는 것을 방지)
+        # Skip samples whose id/user_id already exists, otherwise one UNIQUE violation would roll back everything
         ids_u = {int(x) for x in query_scalar(args, "select id from ebiz.users").split() if x}
         uids_u = set(query_scalar(args, "select user_id from ebiz.users").splitlines())
         ids_b = {int(x) for x in query_scalar(args, "select id from ebiz.board").split() if x}
@@ -408,11 +408,11 @@ def main(argv=None) -> int:
         filtered_b = [r for r in board_out if r[0] not in ids_b]
         skipped_b = len(board_out) - len(filtered_b)
         users_out, board_out = filtered_u, filtered_b
-        print(f"추가 모드: 기존 행과 충돌하는 샘플 건너뜀 (users {skipped_u}건, board {skipped_b}건)")
+        print(f"append mode: skipped samples that collide with existing rows (users {skipped_u}, board {skipped_b})")
     if (existing_b or existing_u) and not (args.truncate or args.append):
         raise SystemExit(
-            f"중단: 이미 데이터가 있습니다(users {existing_u}건, board {existing_b}건). "
-            "덮어쓰려면 --truncate 를 명시하세요.")
+            f"aborted: the tables already hold data (users {existing_u}, board {existing_b}). "
+            "Pass --truncate to replace it or --append to add to it.")
 
     tmpdir = Path(tempfile.mkdtemp(prefix="myapp-import-"))
     os.chmod(tmpdir, 0o700)
@@ -433,15 +433,15 @@ def main(argv=None) -> int:
     script = tmpdir / "import.sql"
     script.write_text("\n".join(sql) + "\n", encoding="utf-8")
 
-    print(f"\n적재 실행 (psql \\copy, 트랜잭션 1개): {args.db_name}.ebiz")
+    print(f"\nloading (single transaction, psql \\copy): {args.db_name}.ebiz")
     run_psql_file(args, script)
 
-    # 5) 결과 확인
+    # 5) verify the result
     u_cnt = query_scalar(args, "select count(*) from ebiz.users")
     b_cnt = query_scalar(args, "select count(*) from ebiz.board")
     null_pii = query_scalar(args, "select count(*) from ebiz.users where phone_blind_idx is null")
-    print(f"적재 완료: users {u_cnt}건, board {b_cnt}건 (blind index 누락 {null_pii}건)")
-    print(f"시퀀스: users → {query_scalar(args, 'select last_value from ebiz.users_id_seq')}, "
+    print(f"loaded: users {u_cnt} rows, board {b_cnt} rows ({null_pii} row(s) with a missing blind index)")
+    print(f"sequences: users -> {query_scalar(args, 'select last_value from ebiz.users_id_seq')}, "
           f"board → {query_scalar(args, 'select last_value from ebiz.board_id_seq')}")
 
     for f in (users_csv, board_csv):
