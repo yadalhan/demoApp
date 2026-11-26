@@ -211,6 +211,36 @@ JSON의 `board.password`, `users.id_no`/`phone`은 평문이므로, 스크립트
 - `psql \copy`(CSV)로 **한 트랜잭션**에 적재하고, 완료 후 identity 시퀀스를 `max(id)`로 맞춘다
 - 기존 행과 `id`/`user_id`가 겹치면 `--append` 모드에서 해당 샘플만 건너뛴다
 
+## Local Development without Vault (개인 PC)
+
+Vault/OpenBao 없이 로컬에서 앱을 띄우려면 `local` 프로필을 사용합니다. 키는 파일(`.local-crypto/keys.json`)로
+대체되고, Spring Cloud Vault 자동 구성은 꺼집니다(그래서 vault-crypto 자동 구성도 물러나고
+`LocalCryptoConfig`가 도메인 서비스를 등록합니다).
+
+```bash
+# 1) 로컬 DB 준비 (예: 같은 서버의 별도 database) — 운영 DB를 쓰지 마세요
+createdb demoapp_local && psql -d demoapp_local -c 'create schema ebiz'
+psql -d demoapp_local -f migrations/002_local_schema.sql   # board/users DDL (아래 참고)
+
+# 2) 설정 파일 준비 (gitignore 대상)
+mkdir -p local-dev
+cp src/main/resources/application-local.properties.example local-dev/application-local.properties
+#   DB 접속 정보와 local.crypto.keys-file 경로를 채웁니다
+
+# 3) 실행
+./gradlew bootJar -x test
+java -jar build/libs/xaandemo-0.0.25.jar \
+     --spring.profiles.active=local \
+     --spring.config.additional-location=file:./local-dev/ \
+     --server.port=18080
+```
+
+- `.local-crypto/keys.json`은 첫 기동 시 자동 생성됩니다(32바이트 키 4개). **커밋 금지**, 삭제하면 기존 암호문을
+  복호화할 수 없습니다.
+- 이 키로 만든 데이터는 운영(Vault 기반) 환경에서 복호화되지 않고 그 반대도 마찬가지입니다. 반드시 **별도 로컬 DB**를 사용하세요.
+- Redis가 없으면 `spring.cache.type=none`으로 캐시가 no-op이 되고, `/users2`도 정상 동작합니다.
+- `local` 프로필은 절대 배포 환경에서 사용하지 마세요(KMS를 우회합니다).
+
 ## Building the Project
 
 > **⚠️ Build Environment Notes:**

@@ -1,0 +1,36 @@
+# ---------------------------------------------------------------------------
+# Local development WITHOUT Vault / OpenBao  (copy to a gitignored location)
+#
+#   ./gradlew bootJar -x test
+#   java -jar build/libs/xaandemo-<version>.jar \
+#        --spring.profiles.active=local \
+#        --spring.config.additional-location=file:./local-dev/
+#     (local-dev/application-local.properties = 이 파일)
+# ---------------------------------------------------------------------------
+
+# Database - use a LOCAL database, never the shared/operational one
+spring.datasource.url=jdbc:postgresql://localhost:5432/demoapp_local?currentSchema=ebiz
+spring.datasource.username=<DB_USER>
+spring.datasource.password=<DB_PASSWORD>
+spring.datasource.driver-class-name=org.postgresql.Driver
+spring.datasource.hikari.maximum-pool-size=2
+
+mybatis.configuration.map-underscore-to-camel-case=true
+
+# No Vault: disables Spring Cloud Vault auto-configuration entirely
+# (vault-crypto's auto-configuration backs off too - LocalCryptoConfig fills in)
+spring.cloud.vault.enabled=false
+management.health.vault.enabled=false
+vault.health.enabled=false
+
+# File-backed test keys (created on first start). Keep out of git.
+local.crypto.keys-file=.local-crypto/keys.json
+
+# No Redis: caching becomes a no-op, Redis health check off
+spring.cache.type=none
+management.health.redis.enabled=false
+
+# Do not run the DEK batch switches in local dev
+app.dek-ops.rotate-domain=
+app.dek-ops.reencrypt-domains=
+mybatis.mapper-locations=classpath:mapper/*.xml

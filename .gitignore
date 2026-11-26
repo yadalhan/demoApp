@@ -90,3 +90,8 @@ src/main/resources/application.properties
 __pycache__/
 *.pyc
 dek_transit_backup.json
+
+# local dev (Vault-less) artefacts
+local-dev/
+.local-crypto/
+application-local.properties
