@@ -213,6 +213,8 @@ JSON의 `board.password`, `users.id_no`/`phone`은 평문이므로, 스크립트
 
 ## Local Development without Vault (개인 PC)
 
+> 상세 절차(검증 결과·문제 해결 포함): [`docs/Local_Dev_Without_Vault_Guide.docx`](docs/Local_Dev_Without_Vault_Guide.docx) (4쪽) · [`.pdf`](docs/Local_Dev_Without_Vault_Guide.pdf)
+
 Vault/OpenBao 없이 로컬에서 앱을 띄우려면 `local` 프로필을 사용합니다. 키는 파일(`.local-crypto/keys.json`)로
 대체되고, Spring Cloud Vault 자동 구성은 꺼집니다(그래서 vault-crypto 자동 구성도 물러나고
 `LocalCryptoConfig`가 도메인 서비스를 등록합니다).
